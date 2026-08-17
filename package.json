@@ -1,0 +1,19 @@
+{
+  "name": "wazirx-safe-trader",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "scan": "node src/cli/scan.js",
+    "backtest": "node src/cli/backtest.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-cron": "^4.6.0",
+    "nodemailer": "^9.0.5"
+  }
+}
