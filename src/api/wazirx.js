@@ -54,5 +54,25 @@ export const wazirx = {
     return request(`/sapi/v1/order${test ? '/test' : ''}`, {
       method: 'POST', headers: { 'X-Api-Key': config.apiKey, 'Content-Type': 'application/x-www-form-urlencoded' }, body
     });
+  },
+  async orderStatus(symbol, orderId) {
+    const body = signedBody({ symbol, orderId: String(orderId) });
+    return request(`/sapi/v1/order?${body}`, { headers: { 'X-Api-Key': config.apiKey } });
+  },
+  async myTrades(symbol, orderId) {
+    const body = signedBody({ symbol, orderId: String(orderId) });
+    return request(`/sapi/v1/myTrades?${body}`, { headers: { 'X-Api-Key': config.apiKey } });
+  },
+  _exchangeInfoCache: null,
+  async roundForSymbol(symbol, price, quantity) {
+    this._exchangeInfoCache ??= await this.exchangeInfo();
+    const info = this._exchangeInfoCache.symbols?.find(s => s.symbol === symbol);
+    const tickSize = Number(info?.filters?.find(f => f.filterType === 'PRICE_FILTER')?.tickSize ?? 0);
+    const pricePrecision = tickSize > 0 ? Math.max(0, -Math.floor(Math.log10(tickSize))) : 8;
+    const qtyPrecision = info?.baseAssetPrecision ?? 8;
+    return {
+      price: Number(price.toFixed(pricePrecision)),
+      quantity: Number(quantity.toFixed(qtyPrecision))
+    };
   }
 };

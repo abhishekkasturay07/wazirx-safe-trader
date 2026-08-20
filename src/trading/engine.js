@@ -25,9 +25,17 @@ export async function enter(symbol, signal) {
   const invested = Math.min(config.maxPosition, available);
   if (invested <= 0) return null;
   const quantity = round((invested * (1 - feeRate)) / signal.price);
-  if (config.liveMode) await wazirx.placeLimitOrder({ symbol, side: 'buy', quantity, price: signal.price });
-  const id = store.openPosition({ symbol, mode: config.liveMode ? 'LIVE' : 'PAPER', entryPrice: signal.price, quantity, invested, stopPrice: signal.price * (1 - config.stopLossPercent / 100), targetPrice: signal.price * (1 + config.targetPercent / 100), score: signal.score, reason: signal.reasons.join(', ') });
-  await notify(`🟢 ${symbol.toUpperCase()} BUY ${config.liveMode ? 'submitted' : 'simulated'}`, `Amount: ₹${invested}\nPrice: ₹${signal.price}\nScore: ${signal.score}\nStop: ₹${signal.price * (1 - config.stopLossPercent / 100)}\nTarget: ₹${signal.price * (1 + config.targetPercent / 100)}`);
+  const stopPrice = signal.price * (1 - config.stopLossPercent / 100);
+  const targetPrice = signal.price * (1 + config.targetPercent / 100);
+  if (config.liveMode) {
+    const rounded = await wazirx.roundForSymbol(symbol, signal.price, quantity);
+    const order = await wazirx.placeLimitOrder({ symbol, side: 'buy', quantity: rounded.quantity, price: rounded.price });
+    const id = store.openPending({ symbol, mode: 'LIVE', entryPrice: rounded.price, quantity: rounded.quantity, invested, stopPrice, targetPrice, score: signal.score, reason: signal.reasons.join(', '), buyOrderId: order.id });
+    await notify(`🟡 ${symbol.toUpperCase()} BUY submitted`, `Amount: ₹${invested}\nPrice: ₹${rounded.price}\nScore: ${signal.score}\nOrder: ${order.id}`);
+    return id;
+  }
+  const id = store.openPosition({ symbol, mode: 'PAPER', entryPrice: signal.price, quantity, invested, stopPrice, targetPrice, score: signal.score, reason: signal.reasons.join(', ') });
+  await notify(`🟢 ${symbol.toUpperCase()} BUY simulated`, `Amount: ₹${invested}\nPrice: ₹${signal.price}\nScore: ${signal.score}\nStop: ₹${stopPrice}\nTarget: ₹${targetPrice}`);
   return id;
 }
 
@@ -38,7 +46,13 @@ export async function managePosition(position, price) {
   store.updateProtection(position.id, high, stop);
   const reason = price <= stop ? 'STOP_OR_TRAILING_STOP' : price >= position.target_price ? 'TARGET' : null;
   if (!reason) return null;
-  if (config.liveMode) await wazirx.placeLimitOrder({ symbol: position.symbol, side: 'sell', quantity: position.quantity, price });
+  if (config.liveMode) {
+    const rounded = await wazirx.roundForSymbol(position.symbol, price, position.quantity);
+    const order = await wazirx.placeLimitOrder({ symbol: position.symbol, side: 'sell', quantity: rounded.quantity, price: rounded.price });
+    store.markPendingExit(position.id, order.id, reason);
+    await notify(`🟡 ${position.symbol.toUpperCase()} SELL submitted`, `Trigger: ₹${rounded.price}\nReason: ${reason}\nOrder: ${order.id}`);
+    return null;
+  }
   const proceeds = position.quantity * price * (1 - feeRate);
   const pnl = proceeds - position.invested;
   store.closePosition(position.id, price, pnl, reason);

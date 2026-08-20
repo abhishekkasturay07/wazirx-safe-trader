@@ -21,6 +21,19 @@ db.exec(`
     id INTEGER PRIMARY KEY, level TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL
   );
 `);
+const existingColumns = new Set(db.prepare('PRAGMA table_info(positions)').all().map(c => c.name));
+for (const [name, ddl] of Object.entries({ buy_order_id: 'TEXT', sell_order_id: 'TEXT', filled_quantity: 'REAL' })) {
+  if (!existingColumns.has(name)) db.exec(`ALTER TABLE positions ADD COLUMN ${name} ${ddl}`);
+}
+
+function istDayRangeUtc() {
+  const IST_OFFSET_MS = 5.5 * 3600 * 1000;
+  const istNow = new Date(Date.now() + IST_OFFSET_MS);
+  const istMidnight = Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate());
+  const startUtc = new Date(istMidnight - IST_OFFSET_MS);
+  const endUtc = new Date(startUtc.getTime() + 24 * 3600 * 1000);
+  return [startUtc.toISOString(), endUtc.toISOString()];
+}
 
 export const store = {
   signal(symbol, result) {
@@ -31,15 +44,34 @@ export const store = {
     return db.prepare(`INSERT INTO positions(symbol,mode,entry_price,quantity,invested,stop_price,target_price,high_price,entry_score,entry_reason,opened_at)
       VALUES(@symbol,@mode,@entryPrice,@quantity,@invested,@stopPrice,@targetPrice,@entryPrice,@score,@reason,@now)`).run({ ...p, now: new Date().toISOString() }).lastInsertRowid;
   },
+  openPending(p) {
+    return db.prepare(`INSERT INTO positions(symbol,mode,status,entry_price,quantity,invested,stop_price,target_price,high_price,entry_score,entry_reason,opened_at,buy_order_id)
+      VALUES(@symbol,@mode,'PENDING_ENTRY',@entryPrice,@quantity,@invested,@stopPrice,@targetPrice,@entryPrice,@score,@reason,@now,@buyOrderId)`).run({ ...p, now: new Date().toISOString() }).lastInsertRowid;
+  },
+  confirmEntry(id, { quantity, entryPrice, invested }) {
+    db.prepare("UPDATE positions SET status='OPEN',quantity=?,entry_price=?,invested=?,high_price=?,filled_quantity=? WHERE id=?")
+      .run(quantity, entryPrice, invested, entryPrice, quantity, id);
+  },
+  cancelEntry(id) { db.prepare("UPDATE positions SET status='CANCELLED',closed_at=? WHERE id=?").run(new Date().toISOString(), id); },
+  markPendingExit(id, sellOrderId, reason) { db.prepare("UPDATE positions SET status='PENDING_EXIT',sell_order_id=?,exit_reason=? WHERE id=?").run(sellOrderId, reason, id); },
+  revertToOpen(id) { db.prepare("UPDATE positions SET status='OPEN',sell_order_id=NULL,exit_reason=NULL WHERE id=?").run(id); },
   closePosition(id, exitPrice, pnl, reason) {
+    db.prepare("UPDATE positions SET status='CLOSED',exit_price=?,pnl=?,exit_reason=?,closed_at=? WHERE id=?")
+      .run(exitPrice, pnl, reason, new Date().toISOString(), id);
+  },
+  confirmExit(id, exitPrice, pnl, reason) {
     db.prepare("UPDATE positions SET status='CLOSED',exit_price=?,pnl=?,exit_reason=?,closed_at=? WHERE id=?")
       .run(exitPrice, pnl, reason, new Date().toISOString(), id);
   },
   updateProtection(id, highPrice, stopPrice) { db.prepare('UPDATE positions SET high_price=?,stop_price=? WHERE id=?').run(highPrice, stopPrice, id); },
   openPositions() { return db.prepare("SELECT * FROM positions WHERE status='OPEN' ORDER BY opened_at").all(); },
-  openFor(symbol) { return db.prepare("SELECT * FROM positions WHERE status='OPEN' AND symbol=?").get(symbol); },
+  pendingPositions() { return db.prepare("SELECT * FROM positions WHERE status IN ('PENDING_ENTRY','PENDING_EXIT') ORDER BY opened_at").all(); },
+  openFor(symbol) { return db.prepare("SELECT * FROM positions WHERE status IN ('OPEN','PENDING_ENTRY','PENDING_EXIT') AND symbol=?").get(symbol); },
   recentPositions(limit = 50) { return db.prepare('SELECT * FROM positions ORDER BY opened_at DESC LIMIT ?').all(limit); },
-  todayPnl() { return db.prepare("SELECT COALESCE(SUM(pnl),0) value FROM positions WHERE status='CLOSED' AND date(closed_at)=date('now')").get().value; },
+  todayPnl() {
+    const [start, end] = istDayRangeUtc();
+    return db.prepare("SELECT COALESCE(SUM(pnl),0) value FROM positions WHERE status='CLOSED' AND closed_at>=? AND closed_at<?").get(start, end).value;
+  },
   totalPnl() { return db.prepare("SELECT COALESCE(SUM(pnl),0) value FROM positions WHERE status='CLOSED'").get().value; },
   consecutiveLosses() {
     const rows = db.prepare("SELECT pnl FROM positions WHERE status='CLOSED' ORDER BY closed_at DESC LIMIT 20").all();
