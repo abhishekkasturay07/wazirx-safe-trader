@@ -48,16 +48,23 @@ export const wazirx = {
     const body = signedBody({});
     return request(`/sapi/v1/funds?${body}`, { headers: { 'X-Api-Key': config.apiKey } });
   },
-  async placeLimitOrder({ symbol, side, quantity, price, test = false }) {
+  async placeLimitOrder({ symbol, side, quantity, price, clientOrderId, test = false }) {
     if (!config.liveMode) throw new Error('Live orders are disabled');
-    const body = signedBody({ symbol, side, type: 'limit', quantity: String(quantity), price: String(price) });
+    const params = { symbol, side, type: 'limit', quantity: String(quantity), price: String(price) };
+    if (clientOrderId) params.clientOrderId = clientOrderId;
+    const body = signedBody(params);
     return request(`/sapi/v1/order${test ? '/test' : ''}`, {
       method: 'POST', headers: { 'X-Api-Key': config.apiKey, 'Content-Type': 'application/x-www-form-urlencoded' }, body
     });
   },
-  async orderStatus(symbol, orderId) {
-    const body = signedBody({ symbol, orderId: String(orderId) });
+  async orderStatus(symbol, orderId, clientOrderId) {
+    const params = clientOrderId ? { symbol, clientOrderId } : { symbol, orderId: String(orderId) };
+    const body = signedBody(params);
     return request(`/sapi/v1/order?${body}`, { headers: { 'X-Api-Key': config.apiKey } });
+  },
+  async cancelOrder(symbol, orderId) {
+    const body = signedBody({ symbol, orderId: String(orderId) });
+    return request(`/sapi/v1/order?${body}`, { method: 'DELETE', headers: { 'X-Api-Key': config.apiKey } });
   },
   async myTrades(symbol, orderId) {
     const body = signedBody({ symbol, orderId: String(orderId) });
@@ -72,6 +79,8 @@ export const wazirx = {
     this._exchangeInfoCache ??= await this.exchangeInfo();
     const info = this._exchangeInfoCache.symbols?.find(s => s.symbol === symbol);
     const tickSize = Number(info?.filters?.find(f => f.filterType === 'PRICE_FILTER')?.tickSize ?? 0);
+    // WazirX's documented exchangeInfo only exposes PRICE_FILTER — no LOT_SIZE/minNotional filter is
+    // published, so baseAssetPrecision is the best available proxy for the quantity step.
     const basePrecision = info?.baseAssetPrecision ?? 8;
     const stepSize = Math.pow(10, -basePrecision);
     const EPS = 1e-9;

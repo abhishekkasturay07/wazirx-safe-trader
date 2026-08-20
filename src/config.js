@@ -24,6 +24,7 @@ export const config = Object.freeze({
   dailyLossLimit: number('DAILY_LOSS_LIMIT_INR', 60),
   maxConsecutiveLosses: number('MAX_CONSECUTIVE_LOSSES', 3),
   feePercent: number('TRADING_FEE_PERCENT', 0.2),
+  staleOrderMinutes: number('STALE_ORDER_MINUTES', 30),
   port: number('PORT', 3000),
   databasePath: process.env.DATABASE_PATH ?? './data/trader.db',
   email: {

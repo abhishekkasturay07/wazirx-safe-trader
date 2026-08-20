@@ -22,7 +22,7 @@ db.exec(`
   );
 `);
 const existingColumns = new Set(db.prepare('PRAGMA table_info(positions)').all().map(c => c.name));
-for (const [name, ddl] of Object.entries({ buy_order_id: 'TEXT', sell_order_id: 'TEXT', filled_quantity: 'REAL' })) {
+for (const [name, ddl] of Object.entries({ buy_order_id: 'TEXT', sell_order_id: 'TEXT', filled_quantity: 'REAL', client_order_id: 'TEXT' })) {
   if (!existingColumns.has(name)) db.exec(`ALTER TABLE positions ADD COLUMN ${name} ${ddl}`);
 }
 
@@ -45,16 +45,25 @@ export const store = {
       VALUES(@symbol,@mode,@entryPrice,@quantity,@invested,@stopPrice,@targetPrice,@entryPrice,@score,@reason,@now)`).run({ ...p, now: new Date().toISOString() }).lastInsertRowid;
   },
   openPending(p) {
-    return db.prepare(`INSERT INTO positions(symbol,mode,status,entry_price,quantity,invested,stop_price,target_price,high_price,entry_score,entry_reason,opened_at,buy_order_id)
-      VALUES(@symbol,@mode,'PENDING_ENTRY',@entryPrice,@quantity,@invested,@stopPrice,@targetPrice,@entryPrice,@score,@reason,@now,@buyOrderId)`).run({ ...p, now: new Date().toISOString() }).lastInsertRowid;
+    return db.prepare(`INSERT INTO positions(symbol,mode,status,entry_price,quantity,invested,stop_price,target_price,high_price,entry_score,entry_reason,opened_at,client_order_id)
+      VALUES(@symbol,@mode,'PENDING_ENTRY',@entryPrice,@quantity,@invested,@stopPrice,@targetPrice,@entryPrice,@score,@reason,@now,@clientOrderId)`).run({ ...p, now: new Date().toISOString() }).lastInsertRowid;
+  },
+  attachOrderId(id, side, orderId) {
+    const column = side === 'buy' ? 'buy_order_id' : 'sell_order_id';
+    db.prepare(`UPDATE positions SET ${column}=?,client_order_id=NULL WHERE id=?`).run(String(orderId), id);
   },
   confirmEntry(id, { quantity, entryPrice, invested, stopPrice, targetPrice }) {
     db.prepare("UPDATE positions SET status='OPEN',quantity=?,entry_price=?,invested=?,high_price=?,filled_quantity=?,stop_price=?,target_price=? WHERE id=?")
       .run(quantity, entryPrice, invested, entryPrice, quantity, stopPrice, targetPrice, id);
   },
-  cancelEntry(id) { db.prepare("UPDATE positions SET status='CANCELLED',closed_at=? WHERE id=?").run(new Date().toISOString(), id); },
-  markPendingExit(id, sellOrderId, reason) { db.prepare("UPDATE positions SET status='PENDING_EXIT',sell_order_id=?,exit_reason=? WHERE id=?").run(sellOrderId, reason, id); },
-  revertToOpen(id) { db.prepare("UPDATE positions SET status='OPEN',sell_order_id=NULL,exit_reason=NULL WHERE id=?").run(id); },
+  cancelEntry(id) { db.prepare("UPDATE positions SET status='CANCELLED',closed_at=?,client_order_id=NULL WHERE id=?").run(new Date().toISOString(), id); },
+  markPendingExit(id, reason, clientOrderId) {
+    db.prepare("UPDATE positions SET status='PENDING_EXIT',sell_order_id=NULL,exit_reason=?,client_order_id=? WHERE id=?").run(reason, clientOrderId, id);
+  },
+  revertToOpen(id) { db.prepare("UPDATE positions SET status='OPEN',sell_order_id=NULL,exit_reason=NULL,client_order_id=NULL WHERE id=?").run(id); },
+  reopenAsPendingExit(id, sellOrderId, reason) {
+    db.prepare("UPDATE positions SET status='PENDING_EXIT',sell_order_id=?,exit_reason=?,client_order_id=NULL,exit_price=NULL,pnl=NULL,closed_at=NULL WHERE id=?").run(String(sellOrderId), reason, id);
+  },
   closePosition(id, exitPrice, pnl, reason) {
     db.prepare("UPDATE positions SET status='CLOSED',exit_price=?,pnl=?,exit_reason=?,closed_at=? WHERE id=?")
       .run(exitPrice, pnl, reason, new Date().toISOString(), id);
@@ -63,7 +72,7 @@ export const store = {
     db.prepare("UPDATE positions SET status='CLOSED',exit_price=?,pnl=?,exit_reason=?,closed_at=?,filled_quantity=quantity WHERE id=?")
       .run(exitPrice, pnl, reason, new Date().toISOString(), id);
   },
-  confirmPartialExit(position, { soldQty, soldInvested, exitPrice, pnl, reason }) {
+  confirmPartialExit: db.transaction((position, { soldQty, soldInvested, exitPrice, pnl, reason }) => {
     const now = new Date().toISOString();
     const remainingQty = position.quantity - soldQty;
     const remainingInvested = position.invested - soldInvested;
@@ -72,7 +81,7 @@ export const store = {
       .run({ symbol: position.symbol, mode: position.mode, entryPrice: position.entry_price, soldQty, soldInvested, stopPrice: position.stop_price, targetPrice: position.target_price, highPrice: position.high_price, exitPrice, pnl, score: position.entry_score, entryReason: position.entry_reason, reason, openedAt: position.opened_at, now, sellOrderId: position.sell_order_id });
     db.prepare("UPDATE positions SET status='OPEN',quantity=?,invested=?,sell_order_id=NULL,exit_reason=NULL WHERE id=?")
       .run(remainingQty, remainingInvested, position.id);
-  },
+  }),
   updateProtection(id, highPrice, stopPrice) { db.prepare('UPDATE positions SET high_price=?,stop_price=? WHERE id=?').run(highPrice, stopPrice, id); },
   openPositions() { return db.prepare("SELECT * FROM positions WHERE status='OPEN' ORDER BY opened_at").all(); },
   activePositions() { return db.prepare("SELECT * FROM positions WHERE status IN ('OPEN','PENDING_ENTRY','PENDING_EXIT') ORDER BY opened_at").all(); },

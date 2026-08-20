@@ -20,6 +20,7 @@ const nearlyGte = (a, b) => a >= b - 1e-8;
 
 async function reconcileEntry(position, fills) {
   const { qty, quoteQty, quoteFee } = summarizeFills(fills, position.symbol);
+  if (qty <= 0) { store.cancelEntry(position.id); return; }
   const invested = quoteQty + quoteFee;
   const entryPrice = invested / qty;
   store.confirmEntry(position.id, {
@@ -32,6 +33,7 @@ async function reconcileEntry(position, fills) {
 
 async function reconcileExit(position, fills) {
   const { qty, quoteQty, quoteFee } = summarizeFills(fills, position.symbol);
+  if (qty <= 0) { store.revertToOpen(position.id); return; }
   const proceeds = quoteQty - quoteFee;
   const reason = position.exit_reason ?? 'FILLED';
   if (nearlyGte(qty, position.quantity)) {
@@ -46,10 +48,26 @@ async function reconcileExit(position, fills) {
   }
 }
 
+// A crash between writing the pending row and attaching the real order id leaves buy/sell_order_id
+// null with only client_order_id set — resolve that by looking the order up by clientOrderId.
+async function resolveOrderId(position, side) {
+  const existing = side === 'buy' ? position.buy_order_id : position.sell_order_id;
+  if (existing) return existing;
+  if (!position.client_order_id) return null;
+  const order = await wazirx.orderStatus(position.symbol, undefined, position.client_order_id);
+  if (order?.id) store.attachOrderId(position.id, side, order.id);
+  return order?.id ?? null;
+}
+
 export async function reconcilePending() {
   for (const position of store.pendingPositions()) {
     try {
-      const orderId = position.status === 'PENDING_ENTRY' ? position.buy_order_id : position.sell_order_id;
+      const side = position.status === 'PENDING_ENTRY' ? 'buy' : 'sell';
+      const orderId = await resolveOrderId(position, side);
+      if (!orderId) {
+        store.event('ERROR', `${position.symbol}: pending position #${position.id} has no order id and no client order id to resolve`);
+        continue;
+      }
       const order = await wazirx.orderStatus(position.symbol, orderId);
       const executedQty = Number(order.executedQty ?? 0);
       if (order.status === 'done' || (order.status === 'cancel' && executedQty > 0)) {
@@ -60,13 +78,31 @@ export async function reconcilePending() {
         if (position.status === 'PENDING_ENTRY') store.cancelEntry(position.id);
         else store.revertToOpen(position.id);
         store.event('INFO', `${position.symbol}: order ${orderId} was cancelled with no fill`);
+      } else if (order.status === 'wait' && staleMinutes(order.createdTime) > config.staleOrderMinutes) {
+        await cancelStale(position, orderId, order.status);
       }
-      // 'wait' / 'idle' — still pending (possibly partially filled), leave untouched until it reaches a terminal status
+      // 'idle' or fresh 'wait' — still pending, leave untouched until terminal or stale
     } catch (error) {
       store.event('ERROR', `reconcile ${position.symbol}: ${error.message}`);
     }
   }
   await detectOrphanOrders();
+}
+
+function staleMinutes(createdTime) {
+  return createdTime ? (Date.now() - Number(createdTime)) / 60000 : 0;
+}
+
+// A limit exit that never reaches its price sits at 'wait' forever, letting real loss run past the
+// configured stop. Cancel it once stale so the next scan re-evaluates and resubmits at a current
+// price — WazirX only supports limit/stop_limit orders, so there's no market-order fallback to cross
+// the spread with.
+async function cancelStale(position, orderId, status) {
+  await wazirx.cancelOrder(position.symbol, orderId);
+  if (position.status === 'PENDING_ENTRY') store.cancelEntry(position.id);
+  else store.revertToOpen(position.id);
+  store.event('INFO', `${position.symbol}: order ${orderId} stale (${status} for >${config.staleOrderMinutes}m) — cancelled`);
+  await notify(`🟡 ${position.symbol.toUpperCase()} stale order cancelled`, `Order ${orderId} sat unfilled past ${config.staleOrderMinutes} minutes and was cancelled.`);
 }
 
 async function detectOrphanOrders() {
