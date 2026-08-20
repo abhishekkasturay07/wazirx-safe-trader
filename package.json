@@ -7,7 +7,7 @@
     "start": "node src/server.js",
     "scan": "node src/cli/scan.js",
     "backtest": "node src/cli/backtest.js",
-    "test": "node --test"
+    "test": "NODE_ENV=test node --test"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

@@ -65,13 +65,8 @@ export async function reconcilePending() {
       const side = position.status === 'PENDING_ENTRY' ? 'buy' : 'sell';
       const orderId = await resolveOrderId(position, side);
       if (!orderId) {
-        if (minutesSince(position.pending_since) > config.staleOrderMinutes) {
-          if (position.status === 'PENDING_ENTRY') store.cancelEntry(position.id);
-          else store.revertToOpen(position.id);
-          store.event('ERROR', `${position.symbol}: gave up resolving an order id after ${config.staleOrderMinutes}m — treated as never placed`);
-        } else {
-          store.event('ERROR', `${position.symbol}: pending position #${position.id} has no order id yet, will keep retrying via clientOrderId`);
-        }
+        const age = minutesSince(position.pending_since);
+        store.event('ERROR', `${position.symbol}: pending position #${position.id} has no resolved order id after ${age.toFixed(1)}m; kept pending because the exchange outcome is unknown`);
         continue;
       }
       const order = await wazirx.orderStatus(position.symbol, orderId);
@@ -131,8 +126,24 @@ async function detectOrphanOrders() {
     const live = await wazirx.openOrders();
     const known = new Set(store.pendingPositions().flatMap(p => [p.buy_order_id, p.sell_order_id].filter(Boolean).map(String)));
     const orphans = live.filter(o => !known.has(String(o.id)));
-    if (orphans.length) {
-      const summary = orphans.map(o => `${o.symbol} ${o.side} id=${o.id} qty=${o.origQty}@${o.price}`).join('\n');
+    const unresolved = [];
+    for (const order of orphans) {
+      const symbol = String(order.symbol ?? '').toLowerCase();
+      const side = String(order.side ?? '').toLowerCase();
+      const quantity = Number(order.origQty);
+      const candidates = side === 'sell' && Number.isFinite(quantity)
+        ? store.orphanExitCandidates(symbol, quantity) : [];
+      if (candidates.length === 1) {
+        const candidate = candidates[0];
+        store.reopenAsPendingExit(candidate.id, order.id, candidate.exit_reason ?? 'LEGACY_ORPHAN_RECOVERY');
+        store.event('INFO', `${symbol}: adopted orphan sell order ${order.id} into legacy position #${candidate.id}`);
+        await notify(`🟡 ${symbol.toUpperCase()} legacy order recovered`, `Orphan sell order ${order.id} was linked to position #${candidate.id}; its previous P/L was removed until the real fill is confirmed.`);
+      } else {
+        unresolved.push(order);
+      }
+    }
+    if (unresolved.length) {
+      const summary = unresolved.map(o => `${o.symbol} ${o.side} id=${o.id} qty=${o.origQty}@${o.price}`).join('\n');
       store.event('ERROR', `Orphan WazirX orders with no local record:\n${summary}`);
       await notify('⚠️ Orphan WazirX orders detected', `These live orders have no matching bot record — check manually:\n${summary}`);
     }

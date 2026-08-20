@@ -35,7 +35,7 @@ app.get('/api/status', async (_req, res) => {
     try { capital = await realPortfolioValueInr(await wazirx.funds()); capitalSource = 'wazirx'; }
     catch { /* WazirX unreachable — capital stays the internal ledger estimate, flagged via capitalSource */ }
   }
-  res.json({ mode, capital, capitalSource, todayPnl: store.todayPnl(mode), totalPnl, openPositions: open, signals: store.latestSignals(), trades: store.recentPositions() });
+  res.json({ mode, capital, capitalSource, todayPnl: store.todayPnl(mode), totalPnl, openPositions: open, signals: store.latestSignals(), trades: store.recentPositions(50, mode) });
 });
 app.post('/api/scan', async (_req, res) => { try { res.json(await scan()); } catch (e) { res.status(500).json({ error: e.message }); } });
 app.get('/api/portfolio', async (_req, res) => {

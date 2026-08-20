@@ -181,3 +181,33 @@ test('a stale exit that fills between cancel-request and status-check is reconci
   assert.ok(Math.abs(p.pnl - 50) < 1e-9);
 });
 
+test('an unresolved submission stays pending even after the stale threshold', async (t) => {
+  const id = store.openPending({ symbol: 'unknowninr', mode: 'LIVE', entryPrice: 10, quantity: 10, invested: 100, stopPrice: 9.8, targetPrice: 10.4, score: 80, reason: 'test', clientOrderId: 'bot-unknown' });
+  db.prepare('UPDATE positions SET pending_since=? WHERE id=?').run(new Date(Date.now() - 24 * 60 * 60000).toISOString(), id);
+  t.mock.method(wazirx, 'orderStatus', async () => { throw new Error('exchange unavailable'); });
+  t.mock.method(wazirx, 'openOrders', async () => ([]));
+  await reconcilePending();
+  const p = position(id);
+  assert.equal(p.status, 'PENDING_ENTRY');
+  assert.equal(p.client_order_id, 'bot-unknown');
+});
+
+test('a unique matching legacy closed sell is safely adopted from open orphan orders', async (t) => {
+  const baselinePnl = store.totalPnl('LIVE');
+  const id = store.openPosition({ symbol: 'legacyinr', mode: 'LIVE', entryPrice: 10, quantity: 25, invested: 250, stopPrice: 9.8, targetPrice: 10.4, score: 80, reason: 'test' });
+  store.closePosition(id, 10.5, 12.5, 'TARGET');
+  t.mock.method(wazirx, 'openOrders', async () => ([{ id: 777, symbol: 'legacyinr', side: 'sell', origQty: '25', price: '10.5' }]));
+  await reconcilePending();
+  const p = position(id);
+  assert.equal(p.status, 'PENDING_EXIT');
+  assert.equal(p.sell_order_id, '777');
+  assert.equal(p.pnl, null, 'unconfirmed legacy profit must be removed until the exchange fill is reconciled');
+  assert.ok(Math.abs(store.totalPnl('LIVE') - baselinePnl) < 1e-9);
+});
+
+test('trade history can be scoped to the active mode', () => {
+  const live = store.recentPositions(100, 'LIVE');
+  const paper = store.recentPositions(100, 'PAPER');
+  assert.equal(live.every(p => p.mode === 'LIVE'), true);
+  assert.equal(paper.every(p => p.mode === 'PAPER'), true);
+});

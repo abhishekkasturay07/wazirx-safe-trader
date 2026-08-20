@@ -28,6 +28,7 @@ export const config = Object.freeze({
   port: number('PORT', 3000),
   databasePath: process.env.DATABASE_PATH ?? './data/trader.db',
   email: {
+    enabled: process.env.NODE_ENV !== 'test' && process.env.EMAIL_ENABLED !== 'false',
     user: process.env.EMAIL_USER ?? '',
     password: process.env.EMAIL_APP_PASSWORD ?? '',
     to: process.env.EMAIL_TO ?? process.env.EMAIL_USER ?? ''

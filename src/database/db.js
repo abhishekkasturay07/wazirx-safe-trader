@@ -65,6 +65,13 @@ export const store = {
   reopenAsPendingExit(id, sellOrderId, reason) {
     db.prepare("UPDATE positions SET status='PENDING_EXIT',sell_order_id=?,exit_reason=?,client_order_id=NULL,exit_price=NULL,pnl=NULL,closed_at=NULL,pending_since=? WHERE id=?").run(String(sellOrderId), reason, new Date().toISOString(), id);
   },
+  orphanExitCandidates(symbol, quantity) {
+    const tolerance = Math.max(1e-8, Math.abs(quantity) * 1e-8);
+    return db.prepare(`SELECT * FROM positions
+      WHERE status='CLOSED' AND mode='LIVE' AND lower(symbol)=lower(?) AND sell_order_id IS NULL
+        AND exit_reason IS NOT NULL AND julianday(closed_at)>=julianday('now','-7 days') AND abs(quantity-?)<=?
+      ORDER BY closed_at DESC`).all(symbol, quantity, tolerance);
+  },
   closePosition(id, exitPrice, pnl, reason) {
     db.prepare("UPDATE positions SET status='CLOSED',exit_price=?,pnl=?,exit_reason=?,closed_at=? WHERE id=?")
       .run(exitPrice, pnl, reason, new Date().toISOString(), id);
@@ -88,7 +95,11 @@ export const store = {
   activePositions(mode) { return db.prepare("SELECT * FROM positions WHERE status IN ('OPEN','PENDING_ENTRY','PENDING_EXIT') AND mode=? ORDER BY opened_at").all(mode); },
   pendingPositions() { return db.prepare("SELECT * FROM positions WHERE status IN ('PENDING_ENTRY','PENDING_EXIT') ORDER BY opened_at").all(); },
   openFor(symbol, mode) { return db.prepare("SELECT * FROM positions WHERE status IN ('OPEN','PENDING_ENTRY','PENDING_EXIT') AND mode=? AND symbol=?").get(mode, symbol); },
-  recentPositions(limit = 50) { return db.prepare('SELECT * FROM positions ORDER BY opened_at DESC LIMIT ?').all(limit); },
+  recentPositions(limit = 50, mode = null) {
+    return mode
+      ? db.prepare('SELECT * FROM positions WHERE mode=? ORDER BY opened_at DESC LIMIT ?').all(mode, limit)
+      : db.prepare('SELECT * FROM positions ORDER BY opened_at DESC LIMIT ?').all(limit);
+  },
   todayPnl(mode) {
     const [start, end] = istDayRangeUtc();
     return db.prepare("SELECT COALESCE(SUM(pnl),0) value FROM positions WHERE status='CLOSED' AND mode=? AND closed_at>=? AND closed_at<?").get(mode, start, end).value;
