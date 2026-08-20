@@ -16,7 +16,12 @@ export function riskStatus() {
 export async function enter(symbol, signal) {
   const risk = riskStatus();
   if (!risk.allowed || signal.score < config.minScore || store.openFor(symbol) || store.openPositions().length >= config.maxOpenPositions) return null;
-  const available = config.startingCapital + store.totalPnl() - store.openPositions().reduce((n, p) => n + p.invested, 0);
+  let available = config.startingCapital + store.totalPnl() - store.openPositions().reduce((n, p) => n + p.invested, 0);
+  if (config.liveMode) {
+    const funds = await wazirx.funds();
+    const inrFree = Number(funds.find(f => f.asset === 'inr')?.free ?? 0);
+    available = Math.min(available, inrFree);
+  }
   const invested = Math.min(config.maxPosition, available);
   if (invested <= 0) return null;
   const quantity = round((invested * (1 - feeRate)) / signal.price);
