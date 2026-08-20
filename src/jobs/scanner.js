@@ -12,6 +12,7 @@ export async function scan() {
   const results = [];
   try {
     if (config.liveMode) await reconcilePending();
+    const mode = config.liveMode ? 'LIVE' : 'PAPER';
     const btcCandles = await wazirx.candles('btcinr');
     const btc = analyze(btcCandles, true);
     const marketBullish = btc.indicators.ema20 > btc.indicators.ema50;
@@ -20,7 +21,7 @@ export async function scan() {
         const candles = symbol === 'btcinr' ? btcCandles : await wazirx.candles(symbol);
         const result = analyze(candles, marketBullish);
         store.signal(symbol, result);
-        const position = store.openFor(symbol);
+        const position = store.openFor(symbol, mode);
         if (position?.status === 'OPEN') await managePosition(position, result.price);
         else if (!position && riskStatus().allowed) await enter(symbol, result);
         results.push({ symbol, ...result });

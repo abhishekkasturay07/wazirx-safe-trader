@@ -28,13 +28,14 @@ async function realPortfolioValueInr(funds) {
 }
 
 app.get('/api/status', async (_req, res) => {
-  const open = store.activePositions(), totalPnl = store.totalPnl();
+  const mode = config.liveMode ? 'LIVE' : 'PAPER';
+  const open = store.activePositions(mode), totalPnl = store.totalPnl(mode);
   let capital = config.startingCapital + totalPnl, capitalSource = 'ledger';
   if (config.liveMode && config.apiKey && config.secretKey) {
     try { capital = await realPortfolioValueInr(await wazirx.funds()); capitalSource = 'wazirx'; }
     catch { /* WazirX unreachable — capital stays the internal ledger estimate, flagged via capitalSource */ }
   }
-  res.json({ mode: config.liveMode ? 'LIVE' : 'PAPER', capital, capitalSource, todayPnl: store.todayPnl(), totalPnl, openPositions: open, signals: store.latestSignals(), trades: store.recentPositions() });
+  res.json({ mode, capital, capitalSource, todayPnl: store.todayPnl(mode), totalPnl, openPositions: open, signals: store.latestSignals(), trades: store.recentPositions() });
 });
 app.post('/api/scan', async (_req, res) => { try { res.json(await scan()); } catch (e) { res.status(500).json({ error: e.message }); } });
 app.get('/api/portfolio', async (_req, res) => {

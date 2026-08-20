@@ -65,7 +65,13 @@ export async function reconcilePending() {
       const side = position.status === 'PENDING_ENTRY' ? 'buy' : 'sell';
       const orderId = await resolveOrderId(position, side);
       if (!orderId) {
-        store.event('ERROR', `${position.symbol}: pending position #${position.id} has no order id and no client order id to resolve`);
+        if (minutesSince(position.pending_since) > config.staleOrderMinutes) {
+          if (position.status === 'PENDING_ENTRY') store.cancelEntry(position.id);
+          else store.revertToOpen(position.id);
+          store.event('ERROR', `${position.symbol}: gave up resolving an order id after ${config.staleOrderMinutes}m — treated as never placed`);
+        } else {
+          store.event('ERROR', `${position.symbol}: pending position #${position.id} has no order id yet, will keep retrying via clientOrderId`);
+        }
         continue;
       }
       const order = await wazirx.orderStatus(position.symbol, orderId);
@@ -78,7 +84,7 @@ export async function reconcilePending() {
         if (position.status === 'PENDING_ENTRY') store.cancelEntry(position.id);
         else store.revertToOpen(position.id);
         store.event('INFO', `${position.symbol}: order ${orderId} was cancelled with no fill`);
-      } else if (order.status === 'wait' && staleMinutes(order.createdTime) > config.staleOrderMinutes) {
+      } else if (order.status === 'wait' && minutesSince(order.createdTime) > config.staleOrderMinutes) {
         await cancelStale(position, orderId, order.status);
       }
       // 'idle' or fresh 'wait' — still pending, leave untouched until terminal or stale
@@ -89,20 +95,35 @@ export async function reconcilePending() {
   await detectOrphanOrders();
 }
 
-function staleMinutes(createdTime) {
-  return createdTime ? (Date.now() - Number(createdTime)) / 60000 : 0;
+function minutesSince(timestamp) {
+  return timestamp ? (Date.now() - new Date(Number(timestamp) || timestamp).getTime()) / 60000 : 0;
 }
 
 // A limit exit that never reaches its price sits at 'wait' forever, letting real loss run past the
-// configured stop. Cancel it once stale so the next scan re-evaluates and resubmits at a current
-// price — WazirX only supports limit/stop_limit orders, so there's no market-order fallback to cross
-// the spread with.
+// configured stop. WazirX only supports limit/stop_limit orders (no market-order fallback to cross
+// the spread with), so the fix is: cancel it, then re-check the ACTUAL final status before touching
+// local state — the order can fill (fully or partially) in the gap between deciding it's stale and
+// the cancel request landing, so we must never assume "cancel requested" means "cancel succeeded with
+// nothing filled".
 async function cancelStale(position, orderId, status) {
-  await wazirx.cancelOrder(position.symbol, orderId);
-  if (position.status === 'PENDING_ENTRY') store.cancelEntry(position.id);
-  else store.revertToOpen(position.id);
-  store.event('INFO', `${position.symbol}: order ${orderId} stale (${status} for >${config.staleOrderMinutes}m) — cancelled`);
-  await notify(`🟡 ${position.symbol.toUpperCase()} stale order cancelled`, `Order ${orderId} sat unfilled past ${config.staleOrderMinutes} minutes and was cancelled.`);
+  await wazirx.cancelOrder(position.symbol, orderId).catch(error => {
+    store.event('INFO', `${position.symbol}: cancel request for stale order ${orderId} failed (${error.message}) — checking its real final status anyway`);
+  });
+  const final = await wazirx.orderStatus(position.symbol, orderId);
+  const executedQty = Number(final.executedQty ?? 0);
+  if (final.status === 'done' || (final.status === 'cancel' && executedQty > 0)) {
+    const fills = await wazirx.myTrades(position.symbol, orderId);
+    if (position.status === 'PENDING_ENTRY') await reconcileEntry(position, fills);
+    else await reconcileExit(position, fills);
+    store.event('INFO', `${position.symbol}: stale order ${orderId} had filled by the time it was cancelled — reconciled ${executedQty}`);
+  } else if (final.status === 'cancel') {
+    if (position.status === 'PENDING_ENTRY') store.cancelEntry(position.id);
+    else store.revertToOpen(position.id);
+    store.event('INFO', `${position.symbol}: order ${orderId} stale (${status} for >${config.staleOrderMinutes}m) — cancelled with no fill`);
+    await notify(`🟡 ${position.symbol.toUpperCase()} stale order cancelled`, `Order ${orderId} sat unfilled past ${config.staleOrderMinutes} minutes and was cancelled.`);
+  } else {
+    store.event('ERROR', `${position.symbol}: stale-order cancel for ${orderId} did not reach a terminal status (still ${final.status}) — will retry next cycle`);
+  }
 }
 
 async function detectOrphanOrders() {

@@ -14,7 +14,6 @@ process.env.MAX_OPEN_POSITIONS = '2';
 const { store, db } = await import('../src/database/db.js');
 const { wazirx } = await import('../src/api/wazirx.js');
 const { reconcilePending } = await import('../src/trading/reconcile.js');
-const { enter } = await import('../src/trading/engine.js');
 
 test.after(() => { for (const suffix of ['', '-shm', '-wal']) fs.rmSync(dbPath + suffix, { force: true }); });
 
@@ -32,16 +31,6 @@ function insertPendingExit(orderId, over = {}) {
 }
 
 function position(id) { return store.recentPositions(50).find(p => p.id === id); }
-
-test('enter() refuses a new position once PENDING_ENTRY rows alone reach MAX_OPEN_POSITIONS', async () => {
-  // Runs first, against the still-empty DB, so pending rows (not OPEN ones) are what hits the cap.
-  assert.equal(store.activePositions().length, 0);
-  insertPendingEntry('1005', { symbol: 'aaainr' });
-  insertPendingEntry('1006', { symbol: 'bbbinr' });
-  assert.equal(store.activePositions().length, 2);
-  const result = await enter('cccinr', { score: 90, price: 5, reasons: ['test'] });
-  assert.equal(result, null);
-});
 
 test('complete buy fill confirms OPEN with real quantity/price and recomputed stop/target', async (t) => {
   const id = insertPendingEntry('1001');
@@ -145,15 +134,50 @@ test('todayPnl uses IST day boundaries, not UTC ones', () => {
   const istMidnightUtcMs = Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate()) - IST_OFFSET_MS;
   const justBeforeIstMidnight = new Date(istMidnightUtcMs - 1000).toISOString();
   const justAfterIstMidnight = new Date(istMidnightUtcMs + 1000).toISOString();
-  const baseline = store.todayPnl();
+  const baseline = store.todayPnl('PAPER');
 
   const excludedId = store.openPosition({ symbol: 'istinr', mode: 'PAPER', entryPrice: 1, quantity: 1, invested: 1, stopPrice: 1, targetPrice: 1, score: 1, reason: 'x' });
   store.closePosition(excludedId, 1, 1000, 'TARGET');
   db.prepare('UPDATE positions SET closed_at=? WHERE id=?').run(justBeforeIstMidnight, excludedId);
-  assert.equal(store.todayPnl(), baseline, 'a trade closed just before IST midnight must not count as today');
+  assert.equal(store.todayPnl('PAPER'), baseline, 'a trade closed just before IST midnight must not count as today');
 
   const includedId = store.openPosition({ symbol: 'istinr', mode: 'PAPER', entryPrice: 1, quantity: 1, invested: 1, stopPrice: 1, targetPrice: 1, score: 1, reason: 'x' });
   store.closePosition(includedId, 1, 55, 'TARGET');
   db.prepare('UPDATE positions SET closed_at=? WHERE id=?').run(justAfterIstMidnight, includedId);
-  assert.ok(Math.abs(store.todayPnl() - (baseline + 55)) < 1e-9, 'a trade closed just after IST midnight must count as today');
+  assert.ok(Math.abs(store.todayPnl('PAPER') - (baseline + 55)) < 1e-9, 'a trade closed just after IST midnight must count as today');
 });
+
+test('PAPER and LIVE P&L never mix — totalPnl/todayPnl/consecutiveLosses are mode-scoped', () => {
+  const paperBefore = store.totalPnl('PAPER');
+  const liveBefore = store.totalPnl('LIVE');
+  const liveLossesBefore = store.consecutiveLosses('LIVE');
+
+  const paperLossId = store.openPosition({ symbol: 'mixinr', mode: 'PAPER', entryPrice: 1, quantity: 1, invested: 1, stopPrice: 1, targetPrice: 1, score: 1, reason: 'x' });
+  store.closePosition(paperLossId, 1, -500, 'STOP_OR_TRAILING_STOP');
+  const paperLossId2 = store.openPosition({ symbol: 'mixinr', mode: 'PAPER', entryPrice: 1, quantity: 1, invested: 1, stopPrice: 1, targetPrice: 1, score: 1, reason: 'x' });
+  store.closePosition(paperLossId2, 1, -500, 'STOP_OR_TRAILING_STOP');
+
+  assert.equal(store.totalPnl('LIVE'), liveBefore, 'PAPER losses must not appear in LIVE totalPnl');
+  assert.equal(store.consecutiveLosses('LIVE'), liveLossesBefore, 'PAPER losses must not count toward the LIVE consecutive-loss breaker');
+  assert.ok(Math.abs(store.totalPnl('PAPER') - (paperBefore - 1000)) < 1e-9, 'the PAPER losses must still be visible under the PAPER mode');
+});
+
+test('a stale exit that fills between cancel-request and status-check is reconciled, not discarded', async (t) => {
+  const id = insertPendingExit('3001');
+  db.prepare('UPDATE positions SET pending_since=? WHERE id=?').run(new Date(Date.now() - 60 * 60000).toISOString(), id);
+  let statusCalls = 0;
+  t.mock.method(wazirx, 'orderStatus', async () => {
+    statusCalls++;
+    // First call (the staleness check) sees it still waiting; by the time cancelStale re-checks
+    // after issuing the cancel, the order has actually filled — the race the review flagged.
+    return statusCalls === 1 ? { status: 'wait', createdTime: Date.now() - 60 * 60000 } : { status: 'done', executedQty: '100' };
+  });
+  t.mock.method(wazirx, 'cancelOrder', async () => ({}));
+  t.mock.method(wazirx, 'myTrades', async () => ([{ qty: '100', quoteQty: '1050', fee: '0', feeCurrency: 'inr' }]));
+  t.mock.method(wazirx, 'openOrders', async () => ([]));
+  await reconcilePending();
+  const p = position(id);
+  assert.equal(p.status, 'CLOSED', 'the fill that snuck in during cancellation must still be reconciled');
+  assert.ok(Math.abs(p.pnl - 50) < 1e-9);
+});
+

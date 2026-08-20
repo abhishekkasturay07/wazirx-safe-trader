@@ -6,33 +6,44 @@ import { wazirx } from '../api/wazirx.js';
 const feeRate = config.feePercent / 100;
 const round = (value, precision = 8) => Number(value.toFixed(precision));
 const newClientOrderId = () => `bot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const currentMode = () => config.liveMode ? 'LIVE' : 'PAPER';
 
 // The DB row is written before the order is submitted, so a crash/DB failure never leaves a real
 // exchange order untracked — worst case is a local PENDING row with no matching order, which
-// reconcilePending() resolves to CANCELLED once it confirms nothing was actually placed.
+// reconcilePending() resolves once it can confirm what actually happened.
+//
+// A submission failure is either definitive (the exchange responded and rejected it — err.definitive
+// is set by wazirx.js's request()) or ambiguous (network/timeout — we never got a response, so the
+// order may or may not exist). Only a definitive rejection is safe to unwind immediately; an
+// ambiguous one must stay PENDING so reconcilePending() can keep retrying the clientOrderId lookup
+// on later scans instead of us guessing and potentially cancelling a row backing a real order.
 async function submitOrder({ id, side, symbol, quantity, price, clientOrderId }) {
   try {
     const order = await wazirx.placeLimitOrder({ symbol, side, quantity, price, clientOrderId });
     store.attachOrderId(id, side, order.id);
-    return order.id;
+    return { orderId: order.id, ambiguous: false };
   } catch (err) {
     const found = await wazirx.orderStatus(symbol, undefined, clientOrderId).catch(() => null);
-    if (found?.id) { store.attachOrderId(id, side, found.id); return found.id; }
-    throw err;
+    if (found?.id) { store.attachOrderId(id, side, found.id); return { orderId: found.id, ambiguous: false }; }
+    if (err.definitive) throw err;
+    store.event('ERROR', `${symbol}: order submission ambiguous (${err.message}) — left pending, will retry resolving it via clientOrderId`);
+    return { orderId: null, ambiguous: true };
   }
 }
 
 export function riskStatus() {
-  const dailyPnl = store.todayPnl(), consecutiveLosses = store.consecutiveLosses();
+  const mode = currentMode();
+  const dailyPnl = store.todayPnl(mode), consecutiveLosses = store.consecutiveLosses(mode);
   const reason = dailyPnl <= -config.dailyLossLimit ? 'Daily loss limit reached'
     : consecutiveLosses >= config.maxConsecutiveLosses ? 'Consecutive loss limit reached' : null;
   return { allowed: !reason, reason, dailyPnl, consecutiveLosses };
 }
 
 export async function enter(symbol, signal) {
+  const mode = currentMode();
   const risk = riskStatus();
-  if (!risk.allowed || signal.score < config.minScore || store.openFor(symbol) || store.activePositions().length >= config.maxOpenPositions) return null;
-  let available = config.startingCapital + store.totalPnl() - store.activePositions().reduce((n, p) => n + p.invested, 0);
+  if (!risk.allowed || signal.score < config.minScore || store.openFor(symbol, mode) || store.activePositions(mode).length >= config.maxOpenPositions) return null;
+  let available = config.startingCapital + store.totalPnl(mode) - store.activePositions(mode).reduce((n, p) => n + p.invested, 0);
   if (config.liveMode) {
     const funds = await wazirx.funds();
     const inrFree = Number(funds.find(f => f.asset === 'inr')?.free ?? 0);
@@ -47,14 +58,15 @@ export async function enter(symbol, signal) {
     const rounded = await wazirx.roundForSymbol(symbol, signal.price, quantity);
     const clientOrderId = newClientOrderId();
     const id = store.openPending({ symbol, mode: 'LIVE', entryPrice: rounded.price, quantity: rounded.quantity, invested, stopPrice, targetPrice, score: signal.score, reason: signal.reasons.join(', '), clientOrderId });
-    let orderId;
+    let result;
     try {
-      orderId = await submitOrder({ id, side: 'buy', symbol, quantity: rounded.quantity, price: rounded.price, clientOrderId });
+      result = await submitOrder({ id, side: 'buy', symbol, quantity: rounded.quantity, price: rounded.price, clientOrderId });
     } catch (err) {
       store.cancelEntry(id);
       throw err;
     }
-    await notify(`🟡 ${symbol.toUpperCase()} BUY submitted`, `Amount: ₹${invested}\nPrice: ₹${rounded.price}\nScore: ${signal.score}\nOrder: ${orderId}`);
+    await notify(result.ambiguous ? `⚠️ ${symbol.toUpperCase()} BUY submission unconfirmed` : `🟡 ${symbol.toUpperCase()} BUY submitted`,
+      `Amount: ₹${invested}\nPrice: ₹${rounded.price}\nScore: ${signal.score}\nOrder: ${result.orderId ?? 'unknown — will resolve on reconciliation'}`);
     return id;
   }
   const id = store.openPosition({ symbol, mode: 'PAPER', entryPrice: signal.price, quantity, invested, stopPrice, targetPrice, score: signal.score, reason: signal.reasons.join(', ') });
@@ -73,14 +85,15 @@ export async function managePosition(position, price) {
     const rounded = await wazirx.roundForSymbol(position.symbol, price, position.quantity);
     const clientOrderId = newClientOrderId();
     store.markPendingExit(position.id, reason, clientOrderId);
-    let orderId;
+    let result;
     try {
-      orderId = await submitOrder({ id: position.id, side: 'sell', symbol: position.symbol, quantity: rounded.quantity, price: rounded.price, clientOrderId });
+      result = await submitOrder({ id: position.id, side: 'sell', symbol: position.symbol, quantity: rounded.quantity, price: rounded.price, clientOrderId });
     } catch (err) {
       store.revertToOpen(position.id);
       throw err;
     }
-    await notify(`🟡 ${position.symbol.toUpperCase()} SELL submitted`, `Trigger: ₹${rounded.price}\nReason: ${reason}\nOrder: ${orderId}`);
+    await notify(result.ambiguous ? `⚠️ ${position.symbol.toUpperCase()} SELL submission unconfirmed` : `🟡 ${position.symbol.toUpperCase()} SELL submitted`,
+      `Trigger: ₹${rounded.price}\nReason: ${reason}\nOrder: ${result.orderId ?? 'unknown — will resolve on reconciliation'}`);
     return null;
   }
   const proceeds = position.quantity * price * (1 - feeRate);

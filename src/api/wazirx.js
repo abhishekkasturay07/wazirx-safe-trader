@@ -17,13 +17,20 @@ function throttle() {
 
 async function request(path, options = {}, attempt = 0) {
   await throttle();
+  // A network-level failure here (timeout, DNS, connection reset) means we never got a response —
+  // whether the exchange actually processed the request is unknown ("ambiguous"). Only a real HTTP
+  // response (even a rejecting one) is a definitive answer, so it's tagged for callers to tell apart.
   const response = await fetch(`${BASE_URL}${path}`, { signal: AbortSignal.timeout(12_000), ...options });
   if (response.status === 429 && attempt < 3) {
     await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
     return request(path, options, attempt + 1);
   }
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`WazirX ${response.status}: ${body.message ?? body.code ?? response.statusText}`);
+  if (!response.ok) {
+    const err = new Error(`WazirX ${response.status}: ${body.message ?? body.code ?? response.statusText}`);
+    err.definitive = true;
+    throw err;
+  }
   return body;
 }
 
