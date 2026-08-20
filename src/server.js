@@ -12,9 +12,28 @@ assertSafeConfiguration();
 const app = express();
 const root = path.dirname(fileURLToPath(import.meta.url));
 app.use(express.static(path.join(root, '../public')));
-app.get('/api/status', (_req, res) => {
-  const open = store.openPositions(), totalPnl = store.totalPnl();
-  res.json({ mode: config.liveMode ? 'LIVE' : 'PAPER', capital: config.startingCapital + totalPnl, todayPnl: store.todayPnl(), totalPnl, openPositions: open, signals: store.latestSignals(), trades: store.recentPositions() });
+
+async function realPortfolioValueInr(funds) {
+  let total = 0;
+  for (const f of funds) {
+    const amount = Number(f.free) + Number(f.locked);
+    if (amount <= 0) continue;
+    if (f.asset === 'inr') { total += amount; continue; }
+    try {
+      const t = await wazirx.ticker(`${f.asset}inr`);
+      total += amount * Number(t.lastPrice);
+    } catch { /* no direct INR pair for this asset — skip its value */ }
+  }
+  return total;
+}
+
+app.get('/api/status', async (_req, res) => {
+  const open = store.activePositions(), totalPnl = store.totalPnl();
+  let capital = config.startingCapital + totalPnl;
+  if (config.liveMode && config.apiKey && config.secretKey) {
+    try { capital = await realPortfolioValueInr(await wazirx.funds()); } catch { /* fall back to ledger value */ }
+  }
+  res.json({ mode: config.liveMode ? 'LIVE' : 'PAPER', capital, todayPnl: store.todayPnl(), totalPnl, openPositions: open, signals: store.latestSignals(), trades: store.recentPositions() });
 });
 app.post('/api/scan', async (_req, res) => { try { res.json(await scan()); } catch (e) { res.status(500).json({ error: e.message }); } });
 app.get('/api/portfolio', async (_req, res) => {
@@ -24,7 +43,7 @@ app.get('/api/portfolio', async (_req, res) => {
     const holdings = funds
       .map(f => ({ asset: f.asset, free: Number(f.free), locked: Number(f.locked) }))
       .filter(f => f.free + f.locked > 0);
-    res.json({ configured: true, holdings });
+    res.json({ configured: true, holdings, totalValueInr: await realPortfolioValueInr(funds) });
   } catch (e) { res.status(500).json({ configured: true, error: e.message, holdings: [] }); }
 });
 

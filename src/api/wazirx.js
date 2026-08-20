@@ -63,16 +63,24 @@ export const wazirx = {
     const body = signedBody({ symbol, orderId: String(orderId) });
     return request(`/sapi/v1/myTrades?${body}`, { headers: { 'X-Api-Key': config.apiKey } });
   },
+  async openOrders() {
+    const body = signedBody({});
+    return request(`/sapi/v1/openOrders?${body}`, { headers: { 'X-Api-Key': config.apiKey } });
+  },
   _exchangeInfoCache: null,
   async roundForSymbol(symbol, price, quantity) {
     this._exchangeInfoCache ??= await this.exchangeInfo();
     const info = this._exchangeInfoCache.symbols?.find(s => s.symbol === symbol);
     const tickSize = Number(info?.filters?.find(f => f.filterType === 'PRICE_FILTER')?.tickSize ?? 0);
-    const pricePrecision = tickSize > 0 ? Math.max(0, -Math.floor(Math.log10(tickSize))) : 8;
-    const qtyPrecision = info?.baseAssetPrecision ?? 8;
+    const basePrecision = info?.baseAssetPrecision ?? 8;
+    const stepSize = Math.pow(10, -basePrecision);
+    const EPS = 1e-9;
+    const floorToMultiple = (value, step) => step > 0 ? Math.floor(value / step + EPS) * step : value;
+    const roundedPrice = floorToMultiple(price, tickSize);
+    const roundedQuantity = floorToMultiple(quantity, stepSize);
     return {
-      price: Number(price.toFixed(pricePrecision)),
-      quantity: Number(quantity.toFixed(qtyPrecision))
+      price: Number(roundedPrice.toFixed(12)),
+      quantity: Number(roundedQuantity.toFixed(12))
     };
   }
 };

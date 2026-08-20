@@ -48,9 +48,9 @@ export const store = {
     return db.prepare(`INSERT INTO positions(symbol,mode,status,entry_price,quantity,invested,stop_price,target_price,high_price,entry_score,entry_reason,opened_at,buy_order_id)
       VALUES(@symbol,@mode,'PENDING_ENTRY',@entryPrice,@quantity,@invested,@stopPrice,@targetPrice,@entryPrice,@score,@reason,@now,@buyOrderId)`).run({ ...p, now: new Date().toISOString() }).lastInsertRowid;
   },
-  confirmEntry(id, { quantity, entryPrice, invested }) {
-    db.prepare("UPDATE positions SET status='OPEN',quantity=?,entry_price=?,invested=?,high_price=?,filled_quantity=? WHERE id=?")
-      .run(quantity, entryPrice, invested, entryPrice, quantity, id);
+  confirmEntry(id, { quantity, entryPrice, invested, stopPrice, targetPrice }) {
+    db.prepare("UPDATE positions SET status='OPEN',quantity=?,entry_price=?,invested=?,high_price=?,filled_quantity=?,stop_price=?,target_price=? WHERE id=?")
+      .run(quantity, entryPrice, invested, entryPrice, quantity, stopPrice, targetPrice, id);
   },
   cancelEntry(id) { db.prepare("UPDATE positions SET status='CANCELLED',closed_at=? WHERE id=?").run(new Date().toISOString(), id); },
   markPendingExit(id, sellOrderId, reason) { db.prepare("UPDATE positions SET status='PENDING_EXIT',sell_order_id=?,exit_reason=? WHERE id=?").run(sellOrderId, reason, id); },
@@ -60,11 +60,22 @@ export const store = {
       .run(exitPrice, pnl, reason, new Date().toISOString(), id);
   },
   confirmExit(id, exitPrice, pnl, reason) {
-    db.prepare("UPDATE positions SET status='CLOSED',exit_price=?,pnl=?,exit_reason=?,closed_at=? WHERE id=?")
+    db.prepare("UPDATE positions SET status='CLOSED',exit_price=?,pnl=?,exit_reason=?,closed_at=?,filled_quantity=quantity WHERE id=?")
       .run(exitPrice, pnl, reason, new Date().toISOString(), id);
+  },
+  confirmPartialExit(position, { soldQty, soldInvested, exitPrice, pnl, reason }) {
+    const now = new Date().toISOString();
+    const remainingQty = position.quantity - soldQty;
+    const remainingInvested = position.invested - soldInvested;
+    db.prepare(`INSERT INTO positions(symbol,mode,status,entry_price,quantity,invested,stop_price,target_price,high_price,exit_price,pnl,entry_score,entry_reason,exit_reason,opened_at,closed_at,sell_order_id,filled_quantity)
+      VALUES(@symbol,@mode,'CLOSED',@entryPrice,@soldQty,@soldInvested,@stopPrice,@targetPrice,@highPrice,@exitPrice,@pnl,@score,@entryReason,@reason,@openedAt,@now,@sellOrderId,@soldQty)`)
+      .run({ symbol: position.symbol, mode: position.mode, entryPrice: position.entry_price, soldQty, soldInvested, stopPrice: position.stop_price, targetPrice: position.target_price, highPrice: position.high_price, exitPrice, pnl, score: position.entry_score, entryReason: position.entry_reason, reason, openedAt: position.opened_at, now, sellOrderId: position.sell_order_id });
+    db.prepare("UPDATE positions SET status='OPEN',quantity=?,invested=?,sell_order_id=NULL,exit_reason=NULL WHERE id=?")
+      .run(remainingQty, remainingInvested, position.id);
   },
   updateProtection(id, highPrice, stopPrice) { db.prepare('UPDATE positions SET high_price=?,stop_price=? WHERE id=?').run(highPrice, stopPrice, id); },
   openPositions() { return db.prepare("SELECT * FROM positions WHERE status='OPEN' ORDER BY opened_at").all(); },
+  activePositions() { return db.prepare("SELECT * FROM positions WHERE status IN ('OPEN','PENDING_ENTRY','PENDING_EXIT') ORDER BY opened_at").all(); },
   pendingPositions() { return db.prepare("SELECT * FROM positions WHERE status IN ('PENDING_ENTRY','PENDING_EXIT') ORDER BY opened_at").all(); },
   openFor(symbol) { return db.prepare("SELECT * FROM positions WHERE status IN ('OPEN','PENDING_ENTRY','PENDING_EXIT') AND symbol=?").get(symbol); },
   recentPositions(limit = 50) { return db.prepare('SELECT * FROM positions ORDER BY opened_at DESC LIMIT ?').all(limit); },
