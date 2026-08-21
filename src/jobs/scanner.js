@@ -3,7 +3,7 @@ import { wazirx } from '../api/wazirx.js';
 import { analyze } from '../strategy/strategy.js';
 import { store } from '../database/db.js';
 import { enter, managePosition, riskStatus } from '../trading/engine.js';
-import { reconcilePending } from '../trading/reconcile.js';
+import { reconcileLiveState } from '../trading/reconcile.js';
 
 let running = false;
 export async function scan() {
@@ -11,7 +11,7 @@ export async function scan() {
   running = true;
   const results = [];
   try {
-    if (config.liveMode) await reconcilePending();
+    if (config.liveMode) await reconcileLiveState();
     const mode = config.liveMode ? 'LIVE' : 'PAPER';
     const btcCandles = await wazirx.candles('btcinr');
     const btc = analyze(btcCandles, true);

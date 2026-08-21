@@ -90,6 +90,34 @@ export async function reconcilePending() {
   await detectOrphanOrders();
 }
 
+export async function reconcileLiveState() {
+  await reconcilePending();
+  await reconcileOpenBalances();
+}
+
+// OPEN rows are the bot's local ledger, while funds() is the exchange source of truth. A coin may
+// disappear when it is sold/transferred outside the bot (or when an older deployment missed an
+// exit), leaving a phantom position that the bot would otherwise display and try to sell forever.
+// Only auto-close a row when the entire base-asset balance is effectively zero. A non-zero mismatch
+// is deliberately left untouched because it can include dust, manual holdings, or a partial sale.
+export async function reconcileOpenBalances() {
+  const positions = store.openPositions('LIVE');
+  if (!positions.length) return;
+  const funds = await wazirx.funds();
+  const totals = new Map(funds.map(f => [String(f.asset).toLowerCase(), Number(f.free) + Number(f.locked)]));
+  for (const position of positions) {
+    const symbol = String(position.symbol).toLowerCase();
+    if (!symbol.endsWith('inr')) continue;
+    const asset = symbol.slice(0, -3);
+    const balance = totals.get(asset) ?? 0;
+    const zeroTolerance = Math.max(1e-12, Math.abs(Number(position.quantity)) * 1e-8);
+    if (balance <= zeroTolerance) {
+      store.closeMissingHolding(position.id);
+      store.event('INFO', `${symbol}: local OPEN position #${position.id} closed because WazirX ${asset.toUpperCase()} balance is zero`);
+    }
+  }
+}
+
 function minutesSince(timestamp) {
   return timestamp ? (Date.now() - new Date(Number(timestamp) || timestamp).getTime()) / 60000 : 0;
 }

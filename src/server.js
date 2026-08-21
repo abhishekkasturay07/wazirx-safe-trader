@@ -6,7 +6,7 @@ import { config, assertSafeConfiguration } from './config.js';
 import { store } from './database/db.js';
 import { scan } from './jobs/scanner.js';
 import { wazirx } from './api/wazirx.js';
-import { reconcilePending } from './trading/reconcile.js';
+import { reconcileLiveState } from './trading/reconcile.js';
 
 assertSafeConfiguration();
 const app = express();
@@ -49,6 +49,6 @@ app.get('/api/portfolio', async (_req, res) => {
   } catch (e) { res.status(500).json({ configured: true, error: e.message, holdings: [] }); }
 });
 
-if (config.liveMode) await reconcilePending().catch(e => store.event('ERROR', `startup reconcile: ${e.message}`));
+if (config.liveMode) await reconcileLiveState().catch(e => store.event('ERROR', `startup reconcile: ${e.message}`));
 cron.schedule(config.scanCron, () => scan().catch(e => store.event('ERROR', e.message)));
 app.listen(config.port, () => console.log(`WazirX trader (${config.liveMode ? 'LIVE' : 'PAPER'}) on http://localhost:${config.port}`));

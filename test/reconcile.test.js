@@ -13,7 +13,7 @@ process.env.MAX_OPEN_POSITIONS = '2';
 
 const { store, db } = await import('../src/database/db.js');
 const { wazirx } = await import('../src/api/wazirx.js');
-const { reconcilePending } = await import('../src/trading/reconcile.js');
+const { reconcilePending, reconcileOpenBalances } = await import('../src/trading/reconcile.js');
 
 test.after(() => { for (const suffix of ['', '-shm', '-wal']) fs.rmSync(dbPath + suffix, { force: true }); });
 
@@ -210,4 +210,21 @@ test('trade history can be scoped to the active mode', () => {
   const paper = store.recentPositions(100, 'PAPER');
   assert.equal(live.every(p => p.mode === 'LIVE'), true);
   assert.equal(paper.every(p => p.mode === 'PAPER'), true);
+});
+
+test('a phantom LIVE OPEN row is closed when the exchange has no base asset', async (t) => {
+  const id = store.openPosition({ symbol: 'ghostinr', mode: 'LIVE', entryPrice: 10, quantity: 5, invested: 50, stopPrice: 9.8, targetPrice: 10.4, score: 80, reason: 'test' });
+  t.mock.method(wazirx, 'funds', async () => ([{ asset: 'inr', free: '100', locked: '0' }]));
+  await reconcileOpenBalances();
+  const p = position(id);
+  assert.equal(p.status, 'CLOSED');
+  assert.equal(p.exit_reason, 'EXTERNAL_BALANCE_MISSING');
+  assert.equal(p.pnl, null, 'unknown external exit must not invent P/L');
+});
+
+test('an OPEN row remains open when WazirX still holds any meaningful base balance', async (t) => {
+  const id = store.openPosition({ symbol: 'heldinr', mode: 'LIVE', entryPrice: 10, quantity: 5, invested: 50, stopPrice: 9.8, targetPrice: 10.4, score: 80, reason: 'test' });
+  t.mock.method(wazirx, 'funds', async () => ([{ asset: 'held', free: '1', locked: '0' }]));
+  await reconcileOpenBalances();
+  assert.equal(position(id).status, 'OPEN');
 });
