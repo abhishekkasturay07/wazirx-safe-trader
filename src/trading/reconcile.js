@@ -120,7 +120,10 @@ export async function reconcileLiveState() {
 // Only auto-close a row when the entire base-asset balance is effectively zero. A non-zero mismatch
 // is deliberately left untouched because it can include dust, manual holdings, or a partial sale.
 export async function reconcileOpenBalances() {
-  const positions = store.openPositions('LIVE');
+  // A manual/external sale can leave an unresolvable PENDING_EXIT row even though the exchange
+  // balance is already zero. Such a phantom row must not consume an entry slot forever.
+  const positions = store.activePositions('LIVE').filter(position =>
+    position.status === 'OPEN' || position.status === 'PENDING_EXIT');
   if (!positions.length) return;
   const funds = await wazirx.funds();
   const totals = new Map(funds.map(f => [String(f.asset).toLowerCase(), Number(f.free) + Number(f.locked)]));

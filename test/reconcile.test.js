@@ -239,6 +239,17 @@ test('a phantom LIVE OPEN row is closed when the exchange has no base asset', as
   assert.equal(p.pnl, null, 'unknown external exit must not invent P/L');
 });
 
+test('a phantom LIVE PENDING_EXIT row is closed when the exchange has no base asset', async (t) => {
+  const id = store.openPosition({ symbol: 'phantominr', mode: 'LIVE', entryPrice: 10, quantity: 5, invested: 50, stopPrice: 9.8, targetPrice: 10.4, score: 80, reason: 'test' });
+  store.markPendingExit(id, 'STOP_OR_TRAILING_STOP', 'missing-order-client-id');
+  t.mock.method(wazirx, 'funds', async () => ([{ asset: 'inr', free: '100', locked: '0' }]));
+  await reconcileOpenBalances();
+  const p = position(id);
+  assert.equal(p.status, 'CLOSED');
+  assert.equal(p.exit_reason, 'EXTERNAL_BALANCE_MISSING');
+  assert.equal(p.client_order_id, null);
+});
+
 test('an OPEN row remains open when WazirX still holds any meaningful base balance', async (t) => {
   const id = store.openPosition({ symbol: 'heldinr', mode: 'LIVE', entryPrice: 10, quantity: 5, invested: 50, stopPrice: 9.8, targetPrice: 10.4, score: 80, reason: 'test' });
   t.mock.method(wazirx, 'funds', async () => ([{ asset: 'held', free: '1', locked: '0' }]));

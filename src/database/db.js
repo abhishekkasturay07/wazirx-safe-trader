@@ -94,7 +94,7 @@ export const store = {
       .run(exitPrice, pnl, reason, new Date().toISOString(), id);
   },
   closeMissingHolding(id) {
-    db.prepare("UPDATE positions SET status='CLOSED',exit_price=NULL,pnl=NULL,exit_reason='EXTERNAL_BALANCE_MISSING',closed_at=?,pending_since=NULL WHERE id=? AND status='OPEN' AND mode='LIVE'")
+    db.prepare("UPDATE positions SET status='CLOSED',exit_price=NULL,pnl=NULL,exit_reason='EXTERNAL_BALANCE_MISSING',closed_at=?,pending_since=NULL,client_order_id=NULL WHERE id=? AND status IN ('OPEN','PENDING_EXIT') AND mode='LIVE'")
       .run(new Date().toISOString(), id);
   },
   confirmPartialExit: db.transaction((position, { soldQty, soldInvested, exitPrice, pnl, reason, nextStage }) => {
