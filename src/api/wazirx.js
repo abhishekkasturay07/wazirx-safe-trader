@@ -71,7 +71,9 @@ export const wazirx = {
   },
   async cancelOrder(symbol, orderId) {
     const body = signedBody({ symbol, orderId: String(orderId) });
-    return request(`/sapi/v1/order?${body}`, { method: 'DELETE', headers: { 'X-Api-Key': config.apiKey } });
+    return request('/sapi/v1/order', {
+      method: 'DELETE', headers: { 'X-Api-Key': config.apiKey, 'Content-Type': 'application/x-www-form-urlencoded' }, body
+    });
   },
   async myTrades(symbol, orderId) {
     const body = signedBody({ symbol, orderId: String(orderId) });

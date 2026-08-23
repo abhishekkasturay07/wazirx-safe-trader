@@ -25,7 +25,11 @@ WAZIRX_API_KEY=...
 WAZIRX_SECRET_KEY=...
 ```
 
-Use a dedicated API key with **Read + SPOT only**, trusted-IP restriction, and no withdrawal/futures/transfer permission. Spot orders are limit orders because that is what the documented spot endpoint supports. A submitted limit order may remain open or partially fill; production use should add order-status reconciliation before enabling live mode.
+Use a dedicated API key with **Read + SPOT only**, trusted-IP restriction, and no withdrawal/futures/transfer permission. Dashboard/API authentication is optional: setting `DASHBOARD_PASSWORD` to at least 16 characters enables HTTP Basic authentication; leaving it blank keeps the dashboard public. Submitted limit orders may remain open or partially fill, so the bot reconciles pending orders against exchange fills.
+
+Entry indicators use only completed candles. Open positions are still checked against the latest available price on every scan. When several symbols qualify, candidates are ranked by signal score and then relative volume before the available position slots are filled.
+
+Set `TRADING_FEE_PERCENT` from the fee actually present in your WazirX fills or account plan; it is not necessarily the example value.
 
 ## What V1 enforces
 
@@ -34,6 +38,8 @@ Use a dedicated API key with **Read + SPOT only**, trusted-IP restriction, and n
 - pause after three consecutive losses
 - fees included in paper P/L and backtest (configure the actual current rate)
 - BTC market filter plus EMA, RSI, MACD crossover and volume score
+- completed-candle entries and score-ranked candidate selection
+- password-protected dashboard/API in live mode
 - local SQLite database and optional Gmail app-password notifications
 
 This software is not investment advice and cannot promise profit. Backtests and paper results do not predict future returns. Indian tax and exchange charges must be handled separately.

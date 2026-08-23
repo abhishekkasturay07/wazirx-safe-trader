@@ -7,10 +7,32 @@ import { store } from './database/db.js';
 import { scan } from './jobs/scanner.js';
 import { wazirx } from './api/wazirx.js';
 import { reconcileLiveState } from './trading/reconcile.js';
+import crypto from 'node:crypto';
 
 assertSafeConfiguration();
 const app = express();
 const root = path.dirname(fileURLToPath(import.meta.url));
+
+app.get('/health', (_req, res) => res.json({ ok: true }));
+
+function sameSecret(actual, expected) {
+  const a = Buffer.from(actual), b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+if (config.dashboardPassword) app.use((req, res, next) => {
+  const [scheme, encoded] = String(req.headers.authorization ?? '').split(' ');
+  let user = '', password = '';
+  if (scheme === 'Basic' && encoded) {
+    const decoded = Buffer.from(encoded, 'base64').toString();
+    const separator = decoded.indexOf(':');
+    if (separator >= 0) { user = decoded.slice(0, separator); password = decoded.slice(separator + 1); }
+  }
+  if (sameSecret(user, config.dashboardUser) && sameSecret(password, config.dashboardPassword)) return next();
+  res.set('WWW-Authenticate', 'Basic realm="WazirX Trader"');
+  return res.status(401).send('Authentication required');
+});
+
 app.use(express.static(path.join(root, '../public')));
 
 async function realPortfolioValueInr(funds) {
