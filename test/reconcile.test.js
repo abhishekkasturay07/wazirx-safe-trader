@@ -164,6 +164,18 @@ test('todayPnl uses IST day boundaries, not UTC ones', () => {
   assert.ok(Math.abs(store.todayPnl('PAPER') - (baseline + 55)) < 1e-9, 'a trade closed just after IST midnight must count as today');
 });
 
+test('consecutive-loss breaker counts only losses closed during the current IST day', () => {
+  const before = store.consecutiveLosses('LIVE');
+  const oldId = store.openPosition({ symbol: 'oldlossinr', mode: 'LIVE', entryPrice: 10, quantity: 1, invested: 10, stopPrice: 9, targetPrice: 11, score: 80, reason: 'test' });
+  store.closePosition(oldId, 9, -1, 'STOP_OR_TRAILING_STOP');
+  db.prepare("UPDATE positions SET closed_at=datetime('now','-2 days') WHERE id=?").run(oldId);
+  assert.equal(store.consecutiveLosses('LIVE'), before, 'a previous-day loss must not keep today locked');
+
+  const todayId = store.openPosition({ symbol: 'todaylossinr', mode: 'LIVE', entryPrice: 10, quantity: 1, invested: 10, stopPrice: 9, targetPrice: 11, score: 80, reason: 'test' });
+  store.closePosition(todayId, 9, -1, 'STOP_OR_TRAILING_STOP');
+  assert.equal(store.consecutiveLosses('LIVE'), before + 1, 'today\'s latest loss must count');
+});
+
 test('PAPER and LIVE P&L never mix — totalPnl/todayPnl/consecutiveLosses are mode-scoped', () => {
   const paperBefore = store.totalPnl('PAPER');
   const liveBefore = store.totalPnl('LIVE');

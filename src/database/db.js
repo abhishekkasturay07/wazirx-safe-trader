@@ -132,7 +132,11 @@ export const store = {
   },
   totalPnl(mode) { return db.prepare("SELECT COALESCE(SUM(pnl),0) value FROM positions WHERE status='CLOSED' AND mode=?").get(mode).value; },
   consecutiveLosses(mode) {
-    const rows = db.prepare("SELECT pnl FROM positions WHERE status='CLOSED' AND mode=? ORDER BY closed_at DESC LIMIT 20").all(mode);
+    // This is a daily circuit breaker. Counting the entire trade history can permanently lock the
+    // bot: once blocked, it cannot place a winning trade that would reset the streak. Reset at the
+    // IST day boundary, consistently with DAILY_LOSS_LIMIT_INR and the dashboard's Today's P&L.
+    const [start, end] = istDayRangeUtc();
+    const rows = db.prepare("SELECT pnl FROM positions WHERE status='CLOSED' AND mode=? AND pnl IS NOT NULL AND closed_at>=? AND closed_at<? ORDER BY closed_at DESC LIMIT 20").all(mode, start, end);
     return rows.findIndex(r => r.pnl >= 0) === -1 ? rows.length : rows.findIndex(r => r.pnl >= 0);
   },
   latestSignals() { return db.prepare('SELECT * FROM signals WHERE id IN (SELECT MAX(id) FROM signals GROUP BY symbol) ORDER BY symbol').all(); },
