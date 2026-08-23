@@ -106,6 +106,23 @@ test('buy fee charged in the base asset reduces the quantity actually received',
   assert.equal(p.invested, 1000);
 });
 
+test('a completed add-on buy combines actual fills into a new fee-aware average entry', async (t) => {
+  const id = store.openPosition({ symbol: 'addinr', mode: 'LIVE', entryPrice: 10, quantity: 30, invested: 300, stopPrice: 9.8, targetPrice: 10.4, score: 80, reason: 'test' });
+  store.markPendingAdd(id, 'add-client');
+  store.attachOrderId(id, 'buy', '1010');
+  t.mock.method(wazirx, 'orderStatus', async () => ({ status: 'done', executedQty: '19.8' }));
+  t.mock.method(wazirx, 'myTrades', async () => ([{ qty: '20', quoteQty: '202', fee: '0.2', feeCurrency: 'add' }]));
+  t.mock.method(wazirx, 'openOrders', async () => ([]));
+  await reconcilePending();
+  const p = position(id);
+  assert.equal(p.status, 'OPEN');
+  assert.equal(p.strategy_stage, 'FULL');
+  assert.ok(Math.abs(p.quantity - 49.8) < 1e-9);
+  assert.ok(Math.abs(p.invested - 502) < 1e-9);
+  assert.ok(Math.abs(p.entry_price - 502 / 49.8) < 1e-9);
+  assert.equal(p.original_quantity, p.quantity);
+});
+
 test('reconciling twice is idempotent — a resolved position is not reprocessed', async (t) => {
   const id = insertPendingEntry('1007');
   let calls = 0;

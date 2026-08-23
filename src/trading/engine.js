@@ -2,11 +2,24 @@ import { config } from '../config.js';
 import { store } from '../database/db.js';
 import { notify } from '../notifications/email.js';
 import { wazirx } from '../api/wazirx.js';
+import { intervalMilliseconds } from '../market/candles.js';
 
 const feeRate = config.feePercent / 100;
 const round = (value, precision = 8) => Number(value.toFixed(precision));
 const newClientOrderId = () => `bot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const currentMode = () => config.liveMode ? 'LIVE' : 'PAPER';
+const targetPrice = (entry, percent) => entry * (1 + percent / 100);
+const positionLocks = new Map();
+
+async function availableCapital(mode) {
+  let available = config.startingCapital + store.totalPnl(mode) - store.activePositions(mode).reduce((n, p) => n + p.invested, 0);
+  if (config.liveMode) {
+    const funds = await wazirx.funds();
+    const inrFree = Number(funds.find(f => f.asset === 'inr')?.free ?? 0);
+    available = Math.min(available, inrFree);
+  }
+  return available;
+}
 
 // The DB row is written before the order is submitted, so a crash/DB failure never leaves a real
 // exchange order untracked — worst case is a local PENDING row with no matching order, which
@@ -42,22 +55,18 @@ export function riskStatus() {
 export async function enter(symbol, signal) {
   const mode = currentMode();
   const risk = riskStatus();
-  if (!risk.allowed || signal.score < config.minScore || store.openFor(symbol, mode) || store.activePositions(mode).length >= config.maxOpenPositions) return null;
-  let available = config.startingCapital + store.totalPnl(mode) - store.activePositions(mode).reduce((n, p) => n + p.invested, 0);
-  if (config.liveMode) {
-    const funds = await wazirx.funds();
-    const inrFree = Number(funds.find(f => f.asset === 'inr')?.free ?? 0);
-    available = Math.min(available, inrFree);
-  }
-  const invested = Math.min(config.maxPosition, available);
+  const cooldownSince = new Date(Date.now() - config.cooldownCandles * intervalMilliseconds(config.interval)).toISOString();
+  if (!risk.allowed || signal.score < config.minScore || store.openFor(symbol, mode) || store.activePositions(mode).length >= config.maxOpenPositions || store.inCooldown(symbol, mode, cooldownSince)) return null;
+  const available = await availableCapital(mode);
+  const invested = Math.min(config.initialPosition, available);
   if (invested <= 0) return null;
   const quantity = round((invested * (1 - feeRate)) / signal.price);
   const stopPrice = signal.price * (1 - config.stopLossPercent / 100);
-  const targetPrice = signal.price * (1 + config.targetPercent / 100);
+  const firstTargetPrice = targetPrice(signal.price, config.firstTakeProfitPercent);
   if (config.liveMode) {
     const rounded = await wazirx.roundForSymbol(symbol, signal.price, quantity);
     const clientOrderId = newClientOrderId();
-    const id = store.openPending({ symbol, mode: 'LIVE', entryPrice: rounded.price, quantity: rounded.quantity, invested, stopPrice, targetPrice, score: signal.score, reason: signal.reasons.join(', '), clientOrderId });
+    const id = store.openPending({ symbol, mode: 'LIVE', entryPrice: rounded.price, quantity: rounded.quantity, invested, stopPrice, targetPrice: firstTargetPrice, score: signal.score, reason: signal.reasons.join(', '), clientOrderId });
     let result;
     try {
       result = await submitOrder({ id, side: 'buy', symbol, quantity: rounded.quantity, price: rounded.price, clientOrderId });
@@ -69,20 +78,43 @@ export async function enter(symbol, signal) {
       `Amount: ₹${invested}\nPrice: ₹${rounded.price}\nScore: ${signal.score}\nOrder: ${result.orderId ?? 'unknown — will resolve on reconciliation'}`);
     return id;
   }
-  const id = store.openPosition({ symbol, mode: 'PAPER', entryPrice: signal.price, quantity, invested, stopPrice, targetPrice, score: signal.score, reason: signal.reasons.join(', ') });
-  await notify(`🟢 ${symbol.toUpperCase()} BUY simulated`, `Amount: ₹${invested}\nPrice: ₹${signal.price}\nScore: ${signal.score}\nStop: ₹${stopPrice}\nTarget: ₹${targetPrice}`);
+  const id = store.openPosition({ symbol, mode: 'PAPER', entryPrice: signal.price, quantity, invested, stopPrice, targetPrice: firstTargetPrice, score: signal.score, reason: signal.reasons.join(', ') });
+  await notify(`🟢 ${symbol.toUpperCase()} BUY simulated`, `Initial amount: ₹${invested}\nPrice: ₹${signal.price}\nScore: ${signal.score}\nStop: ₹${stopPrice}\nFirst target: ₹${firstTargetPrice}`);
   return id;
 }
 
-export async function managePosition(position, price) {
-  let high = Math.max(position.high_price, price);
-  const trailing = high * (1 - config.trailingStopPercent / 100);
-  const stop = Math.max(position.stop_price, trailing);
-  store.updateProtection(position.id, high, stop);
-  const reason = price <= stop ? 'STOP_OR_TRAILING_STOP' : price >= position.target_price ? 'TARGET' : null;
-  if (!reason) return null;
+function continuationValid(signal) {
+  return Boolean(signal?.checks?.emaTrend && signal?.checks?.marketTrend && signal?.indicators?.candleBullish && signal.indicators.rsi >= 40 && signal.indicators.rsi <= 70);
+}
+
+async function addToPosition(position, price) {
+  const mode = currentMode();
+  const remainingCapacity = Math.max(0, config.maxPosition - position.invested);
+  const invested = Math.min(config.addPosition, remainingCapacity, await availableCapital(mode));
+  if (invested <= 0) return null;
+  const quantity = round((invested * (1 - feeRate)) / price);
   if (config.liveMode) {
-    const rounded = await wazirx.roundForSymbol(position.symbol, price, position.quantity);
+    const rounded = await wazirx.roundForSymbol(position.symbol, price, quantity);
+    const clientOrderId = newClientOrderId();
+    store.markPendingAdd(position.id, clientOrderId);
+    try {
+      const result = await submitOrder({ id: position.id, side: 'buy', symbol: position.symbol, quantity: rounded.quantity, price: rounded.price, clientOrderId });
+      await notify(result.ambiguous ? `⚠️ ${position.symbol.toUpperCase()} ADD submission unconfirmed` : `🟡 ${position.symbol.toUpperCase()} ADD submitted`, `Amount: ₹${invested}\nPrice: ₹${rounded.price}`);
+    } catch (err) { store.revertAdd(position.id); throw err; }
+    return 'ADD_PENDING';
+  }
+  const totalQuantity = position.quantity + quantity, totalInvested = position.invested + invested;
+  const entryPrice = totalInvested / totalQuantity;
+  store.confirmAdd(position.id, { addedQuantity: quantity, addedInvested: invested, entryPrice, totalQuantity, totalInvested, stopPrice: entryPrice * (1 - config.stopLossPercent / 100), targetPrice: targetPrice(entryPrice, config.firstTakeProfitPercent) });
+  await notify(`🟢 ${position.symbol.toUpperCase()} ADD simulated`, `Added: ₹${invested}\nNew average: ₹${entryPrice}`);
+  return 'ADDED';
+}
+
+async function exitQuantity(position, price, quantity, reason, nextStage = null) {
+  if (quantity <= 0) return null;
+  if (config.liveMode) {
+    const rounded = await wazirx.roundForSymbol(position.symbol, price, quantity);
+    if (rounded.quantity <= 0) return null;
     const clientOrderId = newClientOrderId();
     store.markPendingExit(position.id, reason, clientOrderId);
     let result;
@@ -93,12 +125,55 @@ export async function managePosition(position, price) {
       throw err;
     }
     await notify(result.ambiguous ? `⚠️ ${position.symbol.toUpperCase()} SELL submission unconfirmed` : `🟡 ${position.symbol.toUpperCase()} SELL submitted`,
-      `Trigger: ₹${rounded.price}\nReason: ${reason}\nOrder: ${result.orderId ?? 'unknown — will resolve on reconciliation'}`);
-    return null;
+      `Trigger: ₹${rounded.price}\nQuantity: ${rounded.quantity}\nReason: ${reason}\nOrder: ${result.orderId ?? 'unknown — will resolve on reconciliation'}`);
+    return 'EXIT_PENDING';
   }
-  const proceeds = position.quantity * price * (1 - feeRate);
-  const pnl = proceeds - position.invested;
-  store.closePosition(position.id, price, pnl, reason);
+  const soldInvested = position.invested * (quantity / position.quantity);
+  const proceeds = quantity * price * (1 - feeRate);
+  const pnl = proceeds - soldInvested;
+  if (quantity >= position.quantity - 1e-8) store.closePosition(position.id, price, pnl, reason);
+  else store.confirmPartialExit(position, { soldQty: quantity, soldInvested, exitPrice: price, pnl, reason, nextStage });
   await notify(`${pnl >= 0 ? '🟢' : '🔴'} ${position.symbol.toUpperCase()} SOLD`, `Exit: ₹${price}\nNet P/L: ₹${pnl.toFixed(2)}\nReason: ${reason}`);
   return pnl;
+}
+
+async function manageFreshPosition(position, price, signal = null, observedHigh = price) {
+  const stage = position.strategy_stage ?? 'INITIAL';
+  const high = Math.max(position.high_price, observedHigh);
+  let stop = position.stop_price;
+  if (['TP1_DONE', 'RUNNER'].includes(stage) && position.basket_break_even) stop = Math.max(stop, position.basket_break_even);
+  if (stage === 'RUNNER') stop = Math.max(stop, high * (1 - config.trailingStopPercent / 100));
+  store.updateProtection(position.id, high, stop);
+
+  if (price <= stop) return exitQuantity(position, price, position.quantity, 'STOP_OR_TRAILING_STOP');
+  const heldHours = (Date.now() - new Date(position.opened_at).getTime()) / 3_600_000;
+  if (heldHours >= config.maxHoldingHours && signal && !continuationValid(signal)) return exitQuantity(position, price, position.quantity, 'TIME_EXIT');
+
+  if (stage === 'INITIAL' && price >= position.entry_price * (1 + config.addTriggerPercent / 100) && continuationValid(signal)) return addToPosition(position, price);
+
+  const originalQuantity = position.original_quantity ?? position.quantity;
+  if (['INITIAL', 'FULL'].includes(stage) && price >= targetPrice(position.entry_price, config.firstTakeProfitPercent)) {
+    const desired = originalQuantity * config.firstSellPercent / 100 - Number(position.tp1_sold_quantity ?? 0);
+    return exitQuantity(position, price, Math.min(position.quantity, desired), 'TAKE_PROFIT_1', 'TP1_DONE');
+  }
+  if (stage === 'TP1_DONE' && price >= targetPrice(position.entry_price, config.secondTakeProfitPercent)) {
+    const desired = originalQuantity * config.secondSellPercent / 100 - Number(position.tp2_sold_quantity ?? 0);
+    return exitQuantity(position, price, Math.min(position.quantity, desired), 'TAKE_PROFIT_2', 'RUNNER');
+  }
+  return null;
+}
+
+// Scanner and WebSocket updates can arrive together. Serialize by position id and always reload the
+// database row inside the lock so an already-pending order can never be submitted a second time.
+export async function managePosition(position, price, signal = null, observedHigh = price) {
+  if (!position?.id || !Number.isFinite(price) || !Number.isFinite(observedHigh)) return null;
+  const previous = positionLocks.get(position.id) ?? Promise.resolve();
+  const run = previous.catch(() => {}).then(async () => {
+    const fresh = store.position(position.id);
+    if (!fresh || fresh.status !== 'OPEN') return null;
+    return manageFreshPosition(fresh, price, signal, observedHigh);
+  });
+  positionLocks.set(position.id, run);
+  try { return await run; }
+  finally { if (positionLocks.get(position.id) === run) positionLocks.delete(position.id); }
 }

@@ -8,6 +8,7 @@ import { scan } from './jobs/scanner.js';
 import { wazirx } from './api/wazirx.js';
 import { reconcileLiveState } from './trading/reconcile.js';
 import crypto from 'node:crypto';
+import { startPriceMonitor } from './jobs/price-monitor.js';
 
 assertSafeConfiguration();
 const app = express();
@@ -72,5 +73,6 @@ app.get('/api/portfolio', async (_req, res) => {
 });
 
 if (config.liveMode) await reconcileLiveState().catch(e => store.event('ERROR', `startup reconcile: ${e.message}`));
+startPriceMonitor();
 cron.schedule(config.scanCron, () => scan().catch(e => store.event('ERROR', e.message)));
 app.listen(config.port, () => console.log(`WazirX trader (${config.liveMode ? 'LIVE' : 'PAPER'}) on http://localhost:${config.port}`));

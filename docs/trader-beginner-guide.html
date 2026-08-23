@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WazirX Trading Bot — Beginner Guide</title>
+<style>
+@page{size:A4;margin:16mm 14mm}*{box-sizing:border-box}body{font-family:"DejaVu Sans",Arial,sans-serif;color:#172033;font-size:11px;line-height:1.5;margin:0}h1{color:#132a57;font-size:25px;margin:0 0 5px}h2{color:#173d78;font-size:17px;border-bottom:2px solid #dbe7fa;padding-bottom:4px;margin:24px 0 10px}h3{color:#24518f;font-size:13px;margin:17px 0 6px}p{margin:5px 0 9px}ul,ol{margin:5px 0 10px 20px;padding:0}li{margin:3px 0}table{border-collapse:collapse;width:100%;margin:8px 0 15px;page-break-inside:auto}tr{page-break-inside:avoid}th,td{border:1px solid #cbd5e1;padding:6px;vertical-align:top}th{background:#eaf1fc;color:#173d78;text-align:left}code{font-family:"DejaVu Sans Mono",monospace;font-size:9.5px;background:#eef2f7;padding:1px 3px}pre{background:#101827;color:#f1f5f9;padding:10px;border-radius:5px;white-space:pre-wrap;font-size:9.5px}.hero{padding:18px;background:#edf4ff;border-left:5px solid #2563eb;margin-bottom:16px}.muted{color:#536174}.warning{background:#fff7e6;border-left:4px solid #f59e0b;padding:9px 11px;margin:10px 0}.danger{background:#fff0f0;border-left:4px solid #dc2626;padding:9px 11px;margin:10px 0}.good{background:#ecfdf3;border-left:4px solid #16a34a;padding:9px 11px;margin:10px 0}.score{font-size:13px;font-weight:bold}.page-break{page-break-before:always}footer{margin-top:25px;color:#64748b;font-size:9px}
+</style>
+</head>
+<body>
+<section class="hero">
+<h1>WazirX Trading Bot — Beginner Guide</h1>
+<p><b>Simple Hinglish explanation of BUY score, risk, exits, fees, code changes and every environment variable.</b></p>
+<p class="muted">Current project code aur supplied Render configuration par based. API keys, passwords aur personal details intentionally include nahi kiye gaye.</p>
+</section>
+
+<div class="danger"><b>Sabse zaroori baat:</b> Bot profit guarantee nahi karta. Score 75 ka matlab “price zaroor badhega” ya “75% chance of profit” nahi hai. Iska matlab sirf programmed conditions mein se kam-se-kam 75 points true hain.</div>
+
+<h2>1. Bot simple language mein kya karta hai?</h2>
+<p>Bot WazirX ke INR crypto pairs ki 15-minute price candles dekhta hai. Har pair ko technical conditions se score deta hai. Achcha score milne par BUY limit order submit karta hai. Position khulne ke baad stop loss, target aur trailing stop se exit decide karta hai.</p>
+<ol>
+<li>WazirX se candles download hoti hain.</li>
+<li>Entry indicators ke liye sirf poori tarah close ho chuki candle use hoti hai.</li>
+<li>BTC ka overall trend check hota hai.</li>
+<li>Har coin ka score calculate hota hai.</li>
+<li>Configured threshold (Render par 75) ke candidates collect hote hain.</li>
+<li>Sab candidates ko score aur relative volume se rank kiya jata hai.</li>
+<li>Risk rules aur slots allow karein to highest-ranked candidate par BUY limit order submit hota hai.</li>
+<li>Open position har scan mein latest available price se check hoti hai.</li>
+</ol>
+
+<h2>2. 75-point BUY logic</h2>
+<table>
+<thead><tr><th>Condition</th><th>Points</th><th>Beginner meaning</th></tr></thead>
+<tbody>
+<tr><td><code>EMA20 &gt; EMA50</code></td><td class="score">25</td><td>Recent average price longer average se upar hai: possible upward trend.</td></tr>
+<tr><td>RSI 40–65 aur rising</td><td class="score">20</td><td>Momentum improve ho raha hai, lekin strategy ke hisab se abhi extremely stretched nahi.</td></tr>
+<tr><td>MACD histogram zero ke upar cross</td><td class="score">20</td><td>Recent momentum upward direction mein turn kar raha ho sakta hai.</td></tr>
+<tr><td>Closed-candle volume &gt; previous 20 average ka 110%</td><td class="score">20</td><td>Move ke saath normal se zyada trading activity hai.</td></tr>
+<tr><td>BTC EMA20 &gt; BTC EMA50</td><td class="score">15</td><td>Overall crypto-market filter bullish maana gaya hai.</td></tr>
+</tbody>
+</table>
+<p>Total maximum score = <b>100</b>. Render par <code>MIN_SIGNAL_SCORE=75</code> hai.</p>
+
+<h3>BUY banane wale kuch combinations</h3>
+<ul>
+<li>EMA 25 + RSI 20 + MACD 20 + BTC 15 = <b>80</b></li>
+<li>EMA 25 + MACD 20 + Volume 20 + BTC 15 = <b>80</b></li>
+<li>EMA 25 + RSI 20 + Volume 20 + BTC 15 = <b>80</b></li>
+<li>EMA 25 + RSI 20 + MACD 20 + Volume 20 = <b>85</b>, even if BTC filter false</li>
+<li>All conditions = <b>100</b></li>
+</ul>
+<div class="warning"><b>75+ ke baad bhi guaranteed purchase nahi:</b> daily-loss breaker clear ho, consecutive-loss limit clear ho, same coin active na ho, slot aur INR available ho, aur exchange limit order fill kare.</div>
+
+<h2>3. Indicators bahut simple language mein</h2>
+<h3>EMA20 aur EMA50</h3>
+<p>EMA moving average hai jo recent prices ko zyada importance deta hai. EMA20 upar hona upward trend ka clue hai, guarantee nahi.</p>
+<h3>RSI</h3>
+<p>RSI momentum meter jaisa hai, generally 0–100. Bot 40–65 aur rising RSI chahta hai: momentum improve ho, par move bahut stretched na ho.</p>
+<h3>MACD cross</h3>
+<p>MACD short aur long momentum compare karta hai. Histogram zero ke upar cross kare to possible upward momentum change maana jata hai. Sideways market mein false signals aa sakte hain.</p>
+<h3>Volume</h3>
+<p>Volume batata hai kitna coin trade hua. Bot latest completed candle ka volume previous 20 completed candles ke average se compare karta hai. Ratio 1.1 ka matlab average se 10% zyada.</p>
+<h3>BTC filter</h3>
+<p>Altcoins BTC se influence ho sakte hain, isliye BTC trend ko 15 points milte hain. Ye full protection nahi; multiple altcoins ek saath gir sakte hain.</p>
+
+<h2>4. BUY ke baad paise ka flow</h2>
+<pre>Render configured capital      = Rs 2,483.19
+Maximum one position           = Rs 500
+Maximum open positions         = 4
+Maximum deployed amount        = Rs 2,000 (about 80.5%)</pre>
+<p>Bot local ledger aur real WazirX free INR dono dekhta hai. Available amount in dono mein jo chhota ho usse capped hota hai. BUY standard limit order hota hai; submit hona aur fill hona alag cheezein hain.</p>
+
+<h2>5. Stop loss, target aur trailing stop</h2>
+<pre>STOP_LOSS_PERCENT=2
+TARGET_PERCENT=7
+TRAILING_STOP_PERCENT=4</pre>
+<p>Agar entry price Rs 100 ho:</p>
+<ul>
+<li>Initial stop approximately Rs 98.</li>
+<li>Target approximately Rs 107.</li>
+<li>Trailing stop highest observed scan price se 4% neeche.</li>
+</ul>
+<p>Starting mein 2% initial stop tighter hai. 4% trailing stop tab initial stop se upar aata hai jab observed price entry se roughly 2.08% upar chala jaye.</p>
+<p>Example: highest observed price Rs 105 hua to trailing level Rs 100.80. Future scan mein price Rs 100.80 ya neeche dikhe to exit trigger ho sakta hai.</p>
+<div class="danger"><b>Current limitation:</b> Exit continuous exchange-native stop nahi hai. Bot scan ke waqt sampled price check karke ordinary limit sell submit karta hai. Beech ka movement miss ho sakta hai aur fast fall mein sell unfilled reh sakti hai.</div>
+
+<h2>6. Fees aur real profit</h2>
+<p><code>TRADING_FEE_PERCENT</code> per-side fee hai; entry aur exit dono par lag sakti hai. 0.2% per side par 7% nominal target roughly +6.57% net aur 2% stop roughly -2.39% net hota hai, spread/slippage se pehle.</p>
+<p>Actual WazirX fee account plan/tier se different ho sakti hai. Completed fill ki fee dekhkar variable set karo. TDS cash flow, GST, spread, slippage aur latency current backtest mein fully model nahi hain.</p>
+
+<h2 class="page-break">7. Code mein maine kya change kiya?</h2>
+<table>
+<thead><tr><th>Change</th><th>Pehle</th><th>Ab / reason</th></tr></thead>
+<tbody>
+<tr><td>Completed-candle entry</td><td>Incomplete candle indicators mein aa sakti thi.</td><td>Entry only closed candle par; cron second se signal change kam.</td></tr>
+<tr><td>Current-price management</td><td>Analysis price use hota tha.</td><td>Open position latest returned price se check hoti hai.</td></tr>
+<tr><td>Candidate ranking</td><td>List ke pehle qualifying coins slots lete the.</td><td>All candidates score, then volume ratio se rank.</td></tr>
+<tr><td>Configurable threshold</td><td>Displayed action mein 75 hardcoded tha.</td><td><code>MIN_SIGNAL_SCORE</code> consistently use hota hai.</td></tr>
+<tr><td>Volume ratio</td><td>Only true/false volume condition.</td><td>Ratio signal details mein, ranking/audit ke liye.</td></tr>
+<tr><td>Backtest timing</td><td>Same signal close par fill assume.</td><td>Next candle open entry; optimistic bias kam.</td></tr>
+<tr><td>Backtest trailing</td><td>Trailing missing.</td><td>Conservative approximation; exact live parity abhi nahi.</td></tr>
+<tr><td>Final open trade</td><td>Result se ignore ho sakti thi.</td><td>Ending equity mein mark-to-market.</td></tr>
+<tr><td>Cancel request</td><td>DELETE params query mein.</td><td>Official form-encoded body format.</td></tr>
+<tr><td>Config checks</td><td>Limited validation.</td><td>Capital, allocation, score, percentage, interval validate.</td></tr>
+<tr><td>Dashboard auth</td><td>No option.</td><td>Optional; blank password allowed, set ho to protection.</td></tr>
+<tr><td>Tests</td><td>23.</td><td>27 tests pass.</td></tr>
+</tbody>
+</table>
+
+<h2>8. Har .env variable ka meaning</h2>
+<table>
+<thead><tr><th>Variable</th><th>Meaning</th><th>Beginner note</th></tr></thead>
+<tbody>
+<tr><td><code>LIVE_MODE</code></td><td>false = paper; true = real orders.</td><td>Sabse dangerous switch. Testing mein false.</td></tr>
+<tr><td><code>LIVE_CONFIRMATION</code></td><td>Live risk phrase.</td><td>Live mein exact <code>I_UNDERSTAND_LIVE_TRADING_RISK</code>.</td></tr>
+<tr><td><code>WAZIRX_API_KEY</code></td><td>Exchange API identity.</td><td>Secret. Withdrawal permission mat do.</td></tr>
+<tr><td><code>WAZIRX_SECRET_KEY</code></td><td>Private calls signing secret.</td><td>Git/chat/PDF mein share nahi.</td></tr>
+<tr><td><code>SYMBOLS</code></td><td>Comma-separated scan pairs.</td><td>104 pairs roughly 2+ minute scan le sakte hain.</td></tr>
+<tr><td><code>CANDLE_INTERVAL</code></td><td>Indicator candle duration.</td><td><code>15m</code> = 15 minutes.</td></tr>
+<tr><td><code>SCAN_CRON</code></td><td>Automatic schedule.</td><td><code>*/15 * * * *</code> = every 15 minutes.</td></tr>
+<tr><td><code>STARTING_CAPITAL_INR</code></td><td>Bot ledger starting capital.</td><td>Exchange equity se exact sync guaranteed nahi.</td></tr>
+<tr><td><code>MAX_POSITION_INR</code></td><td>One trade maximum INR.</td><td>Render: Rs 500.</td></tr>
+<tr><td><code>MAX_OPEN_POSITIONS</code></td><td>Maximum active/pending positions.</td><td>Render: 4.</td></tr>
+<tr><td><code>MIN_SIGNAL_SCORE</code></td><td>Entry-candidate minimum score.</td><td>75 means 75 points, not 75% profit chance.</td></tr>
+<tr><td><code>STOP_LOSS_PERCENT</code></td><td>Initial stop below entry.</td><td>Actual loss gap/fee se larger ho sakta hai.</td></tr>
+<tr><td><code>TARGET_PERCENT</code></td><td>Target above entry.</td><td>Touch/fill guaranteed nahi.</td></tr>
+<tr><td><code>TRAILING_STOP_PERCENT</code></td><td>Highest observed price se distance.</td><td>Initial stop ke saath tighter stop use hota hai.</td></tr>
+<tr><td><code>DAILY_LOSS_LIMIT_INR</code></td><td>Today realized loss par new entries stop.</td><td>Unrealized/pending loss include nahi.</td></tr>
+<tr><td><code>MAX_CONSECUTIVE_LOSSES</code></td><td>Closed losses in a row limit.</td><td>Already-open positions band nahi hoti.</td></tr>
+<tr><td><code>TRADING_FEE_PERCENT</code></td><td>Modelled fee per side.</td><td>Actual account fill se verify.</td></tr>
+<tr><td><code>STALE_ORDER_MINUTES</code></td><td>Pending limit order stale time.</td><td>Current value 30.</td></tr>
+<tr><td><code>PORT</code></td><td>Web server port.</td><td>Render: 3000.</td></tr>
+<tr><td><code>DATABASE_PATH</code></td><td>SQLite location.</td><td>Render persistent disk: <code>/data/trader.db</code>.</td></tr>
+<tr><td><code>EMAIL_ENABLED</code></td><td>Email on/off.</td><td>false means explicitly off.</td></tr>
+<tr><td><code>EMAIL_USER</code></td><td>Sender Gmail.</td><td>Personal value secret rakho.</td></tr>
+<tr><td><code>EMAIL_APP_PASSWORD</code></td><td>Gmail app password.</td><td>Normal Gmail password nahi; secret.</td></tr>
+<tr><td><code>EMAIL_TO</code></td><td>Notification receiver.</td><td>Blank ho to sender fallback.</td></tr>
+<tr><td><code>DASHBOARD_USER</code></td><td>Optional dashboard username.</td><td>Password blank ho to auth active nahi.</td></tr>
+<tr><td><code>DASHBOARD_PASSWORD</code></td><td>Optional dashboard password.</td><td>Blank allowed; set ho to min 16 chars.</td></tr>
+</tbody>
+</table>
+
+<h2>9. Render configuration ka risk</h2>
+<pre>STARTING_CAPITAL_INR=2483.19
+MAX_POSITION_INR=500
+MAX_OPEN_POSITIONS=4
+MIN_SIGNAL_SCORE=75
+STOP_LOSS_PERCENT=2
+TARGET_PERCENT=7
+TRAILING_STOP_PERCENT=4
+DAILY_LOSS_LIMIT_INR=60
+MAX_CONSECUTIVE_LOSSES=2
+STALE_ORDER_MINUTES=30</pre>
+<p>Four full positions Rs 2,000 deploy kar sakti hain: configured capital ka about 80.5%. Daily loss limit about 2.42% hai, lekin breaker only realized closed P/L dekhta hai.</p>
+
+<h2>10. Kya ab profit hoga?</h2>
+<p><b>Honest answer: abhi pata nahi.</b> Changes execution consistency aur safety improve karte hain; profitable edge prove nahi karte.</p>
+<p>Profitability ke liye actual closed trades se win rate, average win/loss, profit factor, expectancy, fees, slippage, maximum drawdown aur symbol-wise performance chahiye.</p>
+<div class="good"><b>Beginner rule:</b> Loss recover karne ke liye position double, leverage, futures, martingale ya averaging down mat use karo. Paper data collect karo aur ek-ek change test karo.</div>
+
+<h2>11. Abhi kya incomplete hai?</h2>
+<ul>
+<li>Exchange-native protective stop-limit lifecycle implemented nahi.</li>
+<li>Backtest multi-symbol four-slot live portfolio reproduce nahi karta.</li>
+<li>Liquidity/spread/order-book filter nahi.</li>
+<li>Actual Render DB ke bina current loss ka exact reason unknown.</li>
+<li>TDS, GST, spread, slippage aur latency full model mein nahi.</li>
+<li>104 symbols scan roughly 2+ minutes le sakta hai.</li>
+</ul>
+<footer>Educational software guide only; not investment advice. Generated 23 August 2026 from the current local project state.</footer>
+</body>
+</html>

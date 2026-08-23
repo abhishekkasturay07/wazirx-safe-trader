@@ -26,12 +26,27 @@ async function reconcileEntry(position, fills) {
   store.confirmEntry(position.id, {
     quantity: qty, entryPrice, invested,
     stopPrice: entryPrice * (1 - config.stopLossPercent / 100),
-    targetPrice: entryPrice * (1 + config.targetPercent / 100)
+    targetPrice: entryPrice * (1 + config.firstTakeProfitPercent / 100)
   });
   await notify(`🟢 ${position.symbol.toUpperCase()} BUY filled`, `Quantity: ${qty}\nCost: ₹${invested.toFixed(2)}`);
 }
 
-async function reconcileExit(position, fills) {
+async function reconcileAdd(position, fills) {
+  const { qty, quoteQty, quoteFee } = summarizeFills(fills, position.symbol);
+  if (qty <= 0) { store.revertAdd(position.id); return; }
+  const addedInvested = quoteQty + quoteFee;
+  const totalQuantity = position.quantity + qty;
+  const totalInvested = position.invested + addedInvested;
+  const entryPrice = totalInvested / totalQuantity;
+  store.confirmAdd(position.id, {
+    addedQuantity: qty, addedInvested, entryPrice, totalQuantity, totalInvested,
+    stopPrice: entryPrice * (1 - config.stopLossPercent / 100),
+    targetPrice: entryPrice * (1 + config.firstTakeProfitPercent / 100)
+  });
+  await notify(`🟢 ${position.symbol.toUpperCase()} ADD filled`, `Added quantity: ${qty}\nNew average: ₹${entryPrice.toFixed(8)}`);
+}
+
+async function reconcileExit(position, fills, legComplete = true) {
   const { qty, quoteQty, quoteFee } = summarizeFills(fills, position.symbol);
   if (qty <= 0) { store.revertToOpen(position.id); return; }
   const proceeds = quoteQty - quoteFee;
@@ -43,7 +58,9 @@ async function reconcileExit(position, fills) {
   } else {
     const soldInvested = position.invested * (qty / position.quantity);
     const pnl = proceeds - soldInvested;
-    store.confirmPartialExit(position, { soldQty: qty, soldInvested, exitPrice: proceeds / qty, pnl, reason });
+    const nextStage = legComplete && reason === 'TAKE_PROFIT_1' ? 'TP1_DONE'
+      : legComplete && reason === 'TAKE_PROFIT_2' ? 'RUNNER' : position.strategy_stage;
+    store.confirmPartialExit(position, { soldQty: qty, soldInvested, exitPrice: proceeds / qty, pnl, reason, nextStage });
     await notify(`${pnl >= 0 ? '🟢' : '🔴'} ${position.symbol.toUpperCase()} PARTIALLY SOLD`, `Sold: ${qty} of ${position.quantity}\nProceeds: ₹${proceeds.toFixed(2)}\nNet P/L: ₹${pnl.toFixed(2)}\nRemaining quantity stays OPEN.`);
   }
 }
@@ -62,7 +79,7 @@ async function resolveOrderId(position, side) {
 export async function reconcilePending() {
   for (const position of store.pendingPositions()) {
     try {
-      const side = position.status === 'PENDING_ENTRY' ? 'buy' : 'sell';
+      const side = ['PENDING_ENTRY', 'PENDING_ADD'].includes(position.status) ? 'buy' : 'sell';
       const orderId = await resolveOrderId(position, side);
       if (!orderId) {
         const age = minutesSince(position.pending_since);
@@ -74,9 +91,11 @@ export async function reconcilePending() {
       if (order.status === 'done' || (order.status === 'cancel' && executedQty > 0)) {
         const fills = await wazirx.myTrades(position.symbol, orderId);
         if (position.status === 'PENDING_ENTRY') await reconcileEntry(position, fills);
-        else await reconcileExit(position, fills);
+        else if (position.status === 'PENDING_ADD') await reconcileAdd(position, fills);
+        else await reconcileExit(position, fills, order.status === 'done');
       } else if (order.status === 'cancel') {
         if (position.status === 'PENDING_ENTRY') store.cancelEntry(position.id);
+        else if (position.status === 'PENDING_ADD') store.revertAdd(position.id);
         else store.revertToOpen(position.id);
         store.event('INFO', `${position.symbol}: order ${orderId} was cancelled with no fill`);
       } else if (order.status === 'wait' && minutesSince(order.createdTime) > config.staleOrderMinutes) {
@@ -137,10 +156,12 @@ async function cancelStale(position, orderId, status) {
   if (final.status === 'done' || (final.status === 'cancel' && executedQty > 0)) {
     const fills = await wazirx.myTrades(position.symbol, orderId);
     if (position.status === 'PENDING_ENTRY') await reconcileEntry(position, fills);
-    else await reconcileExit(position, fills);
+    else if (position.status === 'PENDING_ADD') await reconcileAdd(position, fills);
+    else await reconcileExit(position, fills, final.status === 'done');
     store.event('INFO', `${position.symbol}: stale order ${orderId} had filled by the time it was cancelled — reconciled ${executedQty}`);
   } else if (final.status === 'cancel') {
     if (position.status === 'PENDING_ENTRY') store.cancelEntry(position.id);
+    else if (position.status === 'PENDING_ADD') store.revertAdd(position.id);
     else store.revertToOpen(position.id);
     store.event('INFO', `${position.symbol}: order ${orderId} stale (${status} for >${config.staleOrderMinutes}m) — cancelled with no fill`);
     await notify(`🟡 ${position.symbol.toUpperCase()} stale order cancelled`, `Order ${orderId} sat unfilled past ${config.staleOrderMinutes} minutes and was cancelled.`);

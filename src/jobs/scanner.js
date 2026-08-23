@@ -27,7 +27,7 @@ export async function scan() {
         store.signal(symbol, result);
         const position = store.openFor(symbol, mode);
         const currentPrice = candles.at(-1)?.close;
-        if (position?.status === 'OPEN' && Number.isFinite(currentPrice)) await managePosition(position, currentPrice);
+        if (position?.status === 'OPEN' && Number.isFinite(currentPrice)) await managePosition(position, currentPrice, result);
         else if (!position && riskStatus().allowed && result.score >= config.minScore) candidates.push({ symbol, signal: result });
         results.push({ symbol, ...result });
       } catch (error) {

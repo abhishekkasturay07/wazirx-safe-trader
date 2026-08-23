@@ -22,7 +22,7 @@ export function analyze(candles, marketBullish = true, minScore = 75) {
   return {
     score, action: score >= minScore ? 'BUY' : 'WAIT', price: last(closes),
     candleTime: candles[i].time,
-    indicators: { ema20: last(ema20), ema50: last(ema50), rsi: last(rsis), macdHistogram: last(m.histogram), atr: last(atrs), volumeRatio },
+    indicators: { ema20: last(ema20), ema50: last(ema50), rsi: last(rsis), macdHistogram: last(m.histogram), atr: last(atrs), volumeRatio, candleBullish: candles[i].close > candles[i].open },
     reasons: Object.keys(checks).filter(key => checks[key]), checks
   };
 }
