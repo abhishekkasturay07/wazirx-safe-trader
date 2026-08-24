@@ -46,7 +46,7 @@ async function submitOrder({ id, side, symbol, quantity, price, clientOrderId })
 
 export function riskStatus() {
   const mode = currentMode();
-  const dailyPnl = store.todayPnl(mode), consecutiveLosses = store.consecutiveLosses(mode);
+  const dailyPnl = store.riskPnl(mode), consecutiveLosses = store.consecutiveLosses(mode);
   const reason = dailyPnl <= -config.dailyLossLimit ? 'Daily loss limit reached'
     : consecutiveLosses >= config.maxConsecutiveLosses ? 'Consecutive loss limit reached' : null;
   return { allowed: !reason, reason, dailyPnl, consecutiveLosses };

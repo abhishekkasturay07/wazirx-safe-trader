@@ -81,3 +81,16 @@ test('concurrent scanner/WebSocket triggers cannot submit the same TP1 twice', a
   assert.equal(tp1Rows.length, 1);
   assert.equal(store.openFor('lockinr', 'PAPER').strategy_stage, 'TP1_DONE');
 });
+
+test('manual risk reset clears the breaker window without deleting today P&L', () => {
+  const beforeToday = store.todayPnl('PAPER');
+  store.resetRisk('PAPER');
+  assert.equal(store.riskPnl('PAPER'), 0);
+  assert.equal(store.consecutiveLosses('PAPER'), 0);
+  assert.equal(store.todayPnl('PAPER'), beforeToday);
+
+  const id = store.openPosition({ symbol: 'resetinr', mode: 'PAPER', entryPrice: 10, quantity: 10, invested: 100, stopPrice: 9.8, targetPrice: 10.4, score: 80, reason: 'test' });
+  store.closePosition(id, 9.8, -2, 'STOP_OR_TRAILING_STOP');
+  assert.equal(store.riskPnl('PAPER'), -2);
+  assert.equal(store.consecutiveLosses('PAPER'), 1);
+});

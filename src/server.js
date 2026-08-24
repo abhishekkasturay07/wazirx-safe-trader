@@ -9,6 +9,7 @@ import { wazirx } from './api/wazirx.js';
 import { reconcileLiveState } from './trading/reconcile.js';
 import crypto from 'node:crypto';
 import { startPriceMonitor } from './jobs/price-monitor.js';
+import { riskStatus } from './trading/engine.js';
 
 assertSafeConfiguration();
 const app = express();
@@ -61,6 +62,12 @@ app.get('/api/status', async (_req, res) => {
   res.json({ mode, capital, capitalSource, todayPnl: store.todayPnl(mode), totalPnl, openPositions: open, signals: store.latestSignals(), trades: store.recentPositions(50, mode) });
 });
 app.post('/api/scan', async (_req, res) => { try { res.json(await scan()); } catch (e) { res.status(500).json({ error: e.message }); } });
+app.post('/api/risk/reset', (_req, res) => {
+  const mode = config.liveMode ? 'LIVE' : 'PAPER';
+  const resetAt = store.resetRisk(mode);
+  store.event('INFO', `${mode} daily risk breaker manually reset`);
+  res.json({ ok: true, mode, resetAt, todayPnl: store.todayPnl(mode), risk: riskStatus() });
+});
 app.get('/api/portfolio', async (_req, res) => {
   if (!config.apiKey || !config.secretKey) return res.json({ configured: false, holdings: [] });
   try {

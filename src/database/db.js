@@ -20,6 +20,9 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY, level TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS risk_resets (
+    id INTEGER PRIMARY KEY, mode TEXT NOT NULL, created_at TEXT NOT NULL
+  );
 `);
 const existingColumns = new Set(db.prepare('PRAGMA table_info(positions)').all().map(c => c.name));
 for (const [name, ddl] of Object.entries({
@@ -37,6 +40,12 @@ function istDayRangeUtc() {
   const startUtc = new Date(istMidnight - IST_OFFSET_MS);
   const endUtc = new Date(startUtc.getTime() + 24 * 3600 * 1000);
   return [startUtc.toISOString(), endUtc.toISOString()];
+}
+
+function riskWindowStart(mode) {
+  const [dayStart, dayEnd] = istDayRangeUtc();
+  const reset = db.prepare('SELECT created_at FROM risk_resets WHERE mode=? AND created_at>=? AND created_at<? ORDER BY id DESC LIMIT 1').get(mode, dayStart, dayEnd);
+  return reset?.created_at ?? dayStart;
 }
 
 export const store = {
@@ -137,13 +146,22 @@ export const store = {
     const [start, end] = istDayRangeUtc();
     return db.prepare("SELECT COALESCE(SUM(pnl),0) value FROM positions WHERE status='CLOSED' AND mode=? AND closed_at>=? AND closed_at<?").get(mode, start, end).value;
   },
+  riskPnl(mode) {
+    const start = riskWindowStart(mode);
+    return db.prepare("SELECT COALESCE(SUM(pnl),0) value FROM positions WHERE status='CLOSED' AND mode=? AND closed_at>=?").get(mode, start).value;
+  },
+  resetRisk(mode) {
+    const now = new Date().toISOString();
+    db.prepare('INSERT INTO risk_resets(mode,created_at) VALUES(?,?)').run(mode, now);
+    return now;
+  },
   totalPnl(mode) { return db.prepare("SELECT COALESCE(SUM(pnl),0) value FROM positions WHERE status='CLOSED' AND mode=?").get(mode).value; },
   consecutiveLosses(mode) {
     // This is a daily circuit breaker. Counting the entire trade history can permanently lock the
     // bot: once blocked, it cannot place a winning trade that would reset the streak. Reset at the
     // IST day boundary, consistently with DAILY_LOSS_LIMIT_INR and the dashboard's Today's P&L.
-    const [start, end] = istDayRangeUtc();
-    const rows = db.prepare("SELECT pnl FROM positions WHERE status='CLOSED' AND mode=? AND pnl IS NOT NULL AND closed_at>=? AND closed_at<? ORDER BY closed_at DESC LIMIT 20").all(mode, start, end);
+    const start = riskWindowStart(mode);
+    const rows = db.prepare("SELECT pnl FROM positions WHERE status='CLOSED' AND mode=? AND pnl IS NOT NULL AND closed_at>=? ORDER BY closed_at DESC LIMIT 20").all(mode, start);
     return rows.findIndex(r => r.pnl >= 0) === -1 ? rows.length : rows.findIndex(r => r.pnl >= 0);
   },
   latestSignals() { return db.prepare('SELECT * FROM signals WHERE id IN (SELECT MAX(id) FROM signals GROUP BY symbol) ORDER BY symbol').all(); },
