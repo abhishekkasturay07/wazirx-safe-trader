@@ -152,11 +152,13 @@ async function manageFreshPosition(position, price, signal = null, observedHigh 
   if (stage === 'INITIAL' && price >= position.entry_price * (1 + config.addTriggerPercent / 100) && continuationValid(signal)) return addToPosition(position, price);
 
   const originalQuantity = position.original_quantity ?? position.quantity;
-  if (['INITIAL', 'FULL'].includes(stage) && price >= targetPrice(position.entry_price, config.firstTakeProfitPercent)) {
+  // At profit targets, keep holding while the latest completed candle still confirms a healthy
+  // uptrend. Protective stops remain price-driven and are intentionally never deferred.
+  if (['INITIAL', 'FULL'].includes(stage) && price >= targetPrice(position.entry_price, config.firstTakeProfitPercent) && !continuationValid(signal)) {
     const desired = originalQuantity * config.firstSellPercent / 100 - Number(position.tp1_sold_quantity ?? 0);
     return exitQuantity(position, price, Math.min(position.quantity, desired), 'TAKE_PROFIT_1', 'TP1_DONE');
   }
-  if (stage === 'TP1_DONE' && price >= targetPrice(position.entry_price, config.secondTakeProfitPercent)) {
+  if (stage === 'TP1_DONE' && price >= targetPrice(position.entry_price, config.secondTakeProfitPercent) && !continuationValid(signal)) {
     const desired = originalQuantity * config.secondSellPercent / 100 - Number(position.tp2_sold_quantity ?? 0);
     return exitQuantity(position, price, Math.min(position.quantity, desired), 'TAKE_PROFIT_2', 'RUNNER');
   }

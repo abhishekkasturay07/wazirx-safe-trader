@@ -39,11 +39,19 @@ test('paper strategy adds only on strength, takes 30/30 percent, then trails the
 
   await managePosition(p, p.entry_price * 1.04, continuation);
   p = store.openFor('flowinr', 'PAPER');
+  assert.equal(p.strategy_stage, 'FULL', 'a strong completed-candle trend should defer TP1');
+
+  await managePosition(p, p.entry_price * 1.04, null);
+  p = store.openFor('flowinr', 'PAPER');
   assert.equal(p.strategy_stage, 'TP1_DONE');
   assert.ok(Math.abs(p.tp1_sold_quantity - originalQty * 0.30) < 1e-8);
   assert.ok(p.basket_break_even > 0);
 
   await managePosition(p, p.entry_price * 1.07, continuation);
+  p = store.openFor('flowinr', 'PAPER');
+  assert.equal(p.strategy_stage, 'TP1_DONE', 'a strong completed-candle trend should defer TP2');
+
+  await managePosition(p, p.entry_price * 1.07, null);
   p = store.openFor('flowinr', 'PAPER');
   assert.equal(p.strategy_stage, 'RUNNER');
   assert.ok(Math.abs(p.tp2_sold_quantity - originalQty * 0.30) < 1e-8);

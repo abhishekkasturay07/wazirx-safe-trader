@@ -44,6 +44,13 @@ export const store = {
     db.prepare('INSERT INTO signals(symbol,score,action,price,details,created_at) VALUES(?,?,?,?,?,?)')
       .run(symbol, result.score, result.action, result.price, JSON.stringify(result), new Date().toISOString());
   },
+  latestSignal(symbol, sinceIso = null) {
+    const row = sinceIso
+      ? db.prepare('SELECT details,created_at FROM signals WHERE symbol=? AND created_at>=? ORDER BY id DESC LIMIT 1').get(symbol, sinceIso)
+      : db.prepare('SELECT details,created_at FROM signals WHERE symbol=? ORDER BY id DESC LIMIT 1').get(symbol);
+    if (!row) return null;
+    try { return { ...JSON.parse(row.details), createdAt: row.created_at }; } catch { return null; }
+  },
   openPosition(p) {
     return db.prepare(`INSERT INTO positions(symbol,mode,entry_price,quantity,original_quantity,invested,stop_price,target_price,high_price,entry_score,entry_reason,opened_at)
       VALUES(@symbol,@mode,@entryPrice,@quantity,@quantity,@invested,@stopPrice,@targetPrice,@entryPrice,@score,@reason,@now)`).run({ ...p, now: new Date().toISOString() }).lastInsertRowid;

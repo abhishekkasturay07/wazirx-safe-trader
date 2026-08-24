@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { store } from '../database/db.js';
 import { managePosition } from '../trading/engine.js';
 import { wazirx } from '../api/wazirx.js';
+import { intervalMilliseconds } from '../market/candles.js';
 
 const URL = 'wss://stream.wazirx.com/stream';
 const STREAM = '!ticker@arr';
@@ -42,7 +43,11 @@ export function startPriceMonitor() {
         const position = store.openFor(symbol, mode);
         if (position?.status === 'OPEN') {
           const executablePrice = Number.isFinite(update.bid) && update.bid > 0 ? update.bid : update.last;
-          await managePosition(position, executablePrice, null, update.last);
+          // Reuse only a recent completed-candle analysis. If it is stale/missing, normal target
+          // selling remains the safe fallback; a stale bullish signal must never hold forever.
+          const signalSince = new Date(Date.now() - intervalMilliseconds(config.interval) * 2).toISOString();
+          const signal = store.latestSignal(symbol, signalSince);
+          await managePosition(position, executablePrice, signal, update.last);
         }
         lastProcessed.set(symbol, Date.now());
       }
