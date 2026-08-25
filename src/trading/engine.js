@@ -47,9 +47,11 @@ async function submitOrder({ id, side, symbol, quantity, price, clientOrderId })
 export function riskStatus() {
   const mode = currentMode();
   const dailyPnl = store.riskPnl(mode), consecutiveLosses = store.consecutiveLosses(mode);
-  const reason = dailyPnl <= -config.dailyLossLimit ? 'Daily loss limit reached'
+  const lossLimit = Math.min(config.dailyLossLimit, config.startingCapital * config.dailyLossPercent / 100);
+  const reason = config.pauseNewEntries ? 'New entries manually paused'
+    : dailyPnl <= -lossLimit ? 'Daily loss limit reached'
     : consecutiveLosses >= config.maxConsecutiveLosses ? 'Consecutive loss limit reached' : null;
-  return { allowed: !reason, reason, dailyPnl, consecutiveLosses };
+  return { allowed: !reason, reason, dailyPnl, consecutiveLosses, lossLimit };
 }
 
 export async function enter(symbol, signal) {
@@ -58,7 +60,9 @@ export async function enter(symbol, signal) {
   const cooldownSince = new Date(Date.now() - config.cooldownCandles * intervalMilliseconds(config.interval)).toISOString();
   if (!risk.allowed || signal.score < config.minScore || store.openFor(symbol, mode) || store.activePositions(mode).length >= config.maxOpenPositions || store.inCooldown(symbol, mode, cooldownSince)) return null;
   const available = await availableCapital(mode);
-  const invested = Math.min(config.initialPosition, available);
+  const riskBudget = config.startingCapital * config.maxRiskPerTradePercent / 100;
+  const riskSizedPosition = riskBudget / (config.stopLossPercent / 100);
+  const invested = Math.min(config.initialPosition, config.maxPosition, riskSizedPosition, available);
   if (invested <= 0) return null;
   const quantity = round((invested * (1 - feeRate)) / signal.price);
   const stopPrice = signal.price * (1 - config.stopLossPercent / 100);

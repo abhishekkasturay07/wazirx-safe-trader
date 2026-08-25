@@ -35,6 +35,8 @@ Set `TRADING_FEE_PERCENT` from the fee actually present in your WazirX fills or 
 
 The staged strategy is configurable through `INITIAL_POSITION_INR`, `ADD_POSITION_INR`, `ADD_TRIGGER_PERCENT`, `FIRST_TAKE_PROFIT_PERCENT`, `FIRST_SELL_PERCENT`, `SECOND_TAKE_PROFIT_PERCENT`, and `SECOND_SELL_PERCENT`. The add-on is allowed only after price strength plus completed-candle trend confirmation; falling positions are never averaged down. Partial-fill progress and the `INITIAL` / `FULL` / `TP1_DONE` / `RUNNER` stage are persisted in SQLite.
 
+New entries are paused by default with `PAUSE_NEW_ENTRIES=true`; open positions continue to receive stop and exit management. Before an entry is admitted, `LIQUID_SYMBOLS`, `MAX_SPREAD_PERCENT`, `MIN_24H_QUOTE_VOLUME_INR`, and `MAX_ESTIMATED_SLIPPAGE_PERCENT` screen the pair using the live ticker and order-book bids. Position size is additionally capped by `MAX_RISK_PER_TRADE_PERCENT`.
+
 Open positions are monitored from WazirX's public `!ticker@arr` WebSocket. Last trade prices update the trailing high while best bids are used as the executable trigger price. Updates are serialized per position to prevent scanner/WebSocket duplicate orders. A stale socket reconnects with exponential backoff and polls REST tickers as a fallback. Entry signals remain on completed candles.
 
 ## What V1 enforces

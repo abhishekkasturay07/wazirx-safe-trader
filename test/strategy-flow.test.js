@@ -7,6 +7,7 @@ import path from 'node:path';
 const dbPath = path.join(os.tmpdir(), `wazirx-strategy-flow-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 Object.assign(process.env, {
   DATABASE_PATH: dbPath, LIVE_MODE: 'false', STARTING_CAPITAL_INR: '2483.19', MAX_POSITION_INR: '500',
+  PAUSE_NEW_ENTRIES: 'false',
   INITIAL_POSITION_INR: '300', ADD_POSITION_INR: '200', ADD_TRIGGER_PERCENT: '1', MAX_OPEN_POSITIONS: '4',
   STOP_LOSS_PERCENT: '2', FIRST_TAKE_PROFIT_PERCENT: '4', FIRST_SELL_PERCENT: '30',
   SECOND_TAKE_PROFIT_PERCENT: '7', SECOND_SELL_PERCENT: '30', TRAILING_STOP_PERCENT: '4',

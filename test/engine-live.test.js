@@ -11,6 +11,7 @@ process.env.LIVE_CONFIRMATION = 'I_UNDERSTAND_LIVE_TRADING_RISK';
 process.env.WAZIRX_API_KEY = 'test-key';
 process.env.WAZIRX_SECRET_KEY = 'test-secret';
 process.env.MAX_OPEN_POSITIONS = '5';
+process.env.PAUSE_NEW_ENTRIES = 'false';
 // Explicit and generous so the position-count cap (not capital) is what's under test — otherwise a
 // developer's local .env (small STARTING_CAPITAL_INR) would silently exhaust capital first.
 process.env.STARTING_CAPITAL_INR = '100000';

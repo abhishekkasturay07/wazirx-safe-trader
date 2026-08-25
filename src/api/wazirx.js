@@ -44,6 +44,7 @@ export const wazirx = {
   ping: () => request('/sapi/v1/ping'),
   exchangeInfo: () => request('/sapi/v1/exchangeInfo'),
   ticker: symbol => request(`/sapi/v1/ticker/24hr?${new URLSearchParams({ symbol })}`),
+  depth: (symbol, limit = 100) => request(`/sapi/v1/depth?${new URLSearchParams({ symbol, limit: String(limit) })}`),
   async candles(symbol, interval = config.interval, limit = 2000) {
     const rows = await request(`/sapi/v1/klines?${new URLSearchParams({ symbol, interval, limit: String(limit) })}`);
     return rows.map(([time, open, high, low, close, volume]) => ({
