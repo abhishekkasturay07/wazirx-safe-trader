@@ -3,6 +3,7 @@ import { store } from '../database/db.js';
 import { notify } from '../notifications/email.js';
 import { wazirx } from '../api/wazirx.js';
 import { intervalMilliseconds } from '../market/candles.js';
+import { areEntriesPaused } from '../runtime-controls.js';
 
 const feeRate = config.feePercent / 100;
 const round = (value, precision = 8) => Number(value.toFixed(precision));
@@ -48,7 +49,7 @@ export function riskStatus() {
   const mode = currentMode();
   const dailyPnl = store.riskPnl(mode), consecutiveLosses = store.consecutiveLosses(mode);
   const lossLimit = Math.min(config.dailyLossLimit, config.startingCapital * config.dailyLossPercent / 100);
-  const reason = config.pauseNewEntries ? 'New entries manually paused'
+  const reason = areEntriesPaused() ? 'New entries manually paused'
     : dailyPnl <= -lossLimit ? 'Daily loss limit reached'
     : consecutiveLosses >= config.maxConsecutiveLosses ? 'Consecutive loss limit reached' : null;
   return { allowed: !reason, reason, dailyPnl, consecutiveLosses, lossLimit };

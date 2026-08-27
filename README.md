@@ -14,6 +14,18 @@ npm start
 
 Open `http://localhost:3000`, then press **Scan now**. The scheduled scanner runs every 15 minutes while the server is running.
 
+## Telegram control (optional)
+
+Create a bot with Telegram's `@BotFather`, send the new bot a message, and read your numeric chat ID from `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates`. Then set:
+
+```env
+TELEGRAM_ENABLED=true
+TELEGRAM_BOT_TOKEN=123456:your-bot-token
+TELEGRAM_ALLOWED_CHAT_ID=123456789
+```
+
+Restart the server and send `/help` to the bot. Available commands are `/status`, `/portfolio`, `/scan`, `/pause`, `/resume`, and `/risk`. Only configured chat IDs are accepted; multiple IDs can be comma-separated. Trade notifications are delivered to Telegram automatically. `/pause` and `/resume` affect new entries only and reset to the `.env` default after a process restart.
+
 ## Safety and live mode
 
 Keep `LIVE_MODE=false` until paper results have been reviewed over a meaningful sample. Live mode requires all three values:

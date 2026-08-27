@@ -48,6 +48,12 @@ export const config = Object.freeze({
   databasePath: process.env.DATABASE_PATH ?? './data/trader.db',
   dashboardUser: process.env.DASHBOARD_USER ?? 'trader',
   dashboardPassword: process.env.DASHBOARD_PASSWORD ?? '',
+  telegram: {
+    enabled: process.env.NODE_ENV !== 'test' && process.env.TELEGRAM_ENABLED === 'true',
+    botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
+    allowedChatIds: (process.env.TELEGRAM_ALLOWED_CHAT_IDS ?? process.env.TELEGRAM_ALLOWED_CHAT_ID ?? '')
+      .split(',').map(value => value.trim()).filter(Boolean)
+  },
   email: {
     enabled: process.env.NODE_ENV !== 'test' && process.env.EMAIL_ENABLED !== 'false',
     user: process.env.EMAIL_USER ?? '',
@@ -89,4 +95,7 @@ export function assertSafeConfiguration() {
     if (!config.apiKey || !config.secretKey) throw new Error('Live mode requires WazirX API credentials');
   }
   if (config.dashboardPassword && config.dashboardPassword.length < 16) throw new Error('DASHBOARD_PASSWORD must be blank or at least 16 characters');
+  if (config.telegram.enabled && (!config.telegram.botToken || config.telegram.allowedChatIds.length === 0)) {
+    throw new Error('Telegram requires TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_ID(S)');
+  }
 }

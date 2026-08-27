@@ -10,6 +10,8 @@ import { reconcileLiveState } from './trading/reconcile.js';
 import crypto from 'node:crypto';
 import { startPriceMonitor } from './jobs/price-monitor.js';
 import { riskStatus } from './trading/engine.js';
+import { createTelegramBot } from './telegram/bot.js';
+import { notify } from './notifications/email.js';
 
 assertSafeConfiguration();
 const app = express();
@@ -81,5 +83,10 @@ app.get('/api/portfolio', async (_req, res) => {
 
 if (config.liveMode) await reconcileLiveState().catch(e => store.event('ERROR', `startup reconcile: ${e.message}`));
 startPriceMonitor();
-cron.schedule(config.scanCron, () => scan().catch(e => store.event('ERROR', e.message)));
+const telegramBot = createTelegramBot({ scan, riskStatus });
+telegramBot.start();
+cron.schedule(config.scanCron, () => scan().catch(async e => {
+  store.event('ERROR', e.message);
+  await notify('❌ Scheduled scan failed', e.message);
+}));
 app.listen(config.port, () => console.log(`WazirX trader (${config.liveMode ? 'LIVE' : 'PAPER'}) on http://localhost:${config.port}`));
