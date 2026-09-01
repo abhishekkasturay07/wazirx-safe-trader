@@ -85,6 +85,21 @@ export const wazirx = {
     return request(`/sapi/v1/openOrders?${body}`, { headers: { 'X-Api-Key': config.apiKey } });
   },
   _exchangeInfoCache: null,
+  _marketsCache: null,
+  _marketsCacheAt: 0,
+  // Refreshed hourly so newly listed INR pairs get picked up without needing a process restart,
+  // while avoiding an exchangeInfo call on every scan cycle.
+  async inrMarkets() {
+    const oneHour = 60 * 60 * 1000;
+    if (!this._marketsCache || Date.now() - this._marketsCacheAt > oneHour) {
+      this._exchangeInfoCache = await this.exchangeInfo();
+      this._marketsCache = this._exchangeInfoCache.symbols
+        .filter(s => (s.quoteAsset ? s.quoteAsset.toLowerCase() === 'inr' : s.symbol.toLowerCase().endsWith('inr')) && s.isSpotTradingAllowed !== false)
+        .map(s => s.symbol.toLowerCase());
+      this._marketsCacheAt = Date.now();
+    }
+    return this._marketsCache;
+  },
   async roundForSymbol(symbol, price, quantity) {
     this._exchangeInfoCache ??= await this.exchangeInfo();
     const info = this._exchangeInfoCache.symbols?.find(s => s.symbol === symbol);

@@ -6,6 +6,15 @@ import { telegramRequest } from '../notifications/telegram-client.js';
 
 const money = value => `₹${Number(value).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const mode = () => config.liveMode ? 'LIVE' : 'PAPER';
+export const TELEGRAM_COMMANDS = Object.freeze([
+  { command: 'status', description: 'P&L, risk and open positions' },
+  { command: 'portfolio', description: 'Show WazirX balances' },
+  { command: 'scan', description: 'Run a market scan now' },
+  { command: 'pause', description: 'Stop new entries' },
+  { command: 'resume', description: 'Allow new entries' },
+  { command: 'risk', description: 'Show circuit-breaker details' },
+  { command: 'help', description: 'Show command help' }
+]);
 const HELP = [
   'WazirX Trader commands:',
   '/status - P&L, risk and open positions',
@@ -99,9 +108,19 @@ export function createTelegramBot({ scan, riskStatus, request = telegramRequest,
     }
   }
 
+  async function startPolling() {
+    try {
+      await request('setMyCommands', { commands: TELEGRAM_COMMANDS });
+      logger.info?.('Telegram slash commands registered');
+    } catch (error) {
+      logger.error?.(`Telegram command registration failed: ${error.message}`);
+    }
+    if (!stopped) await poll();
+  }
+
   return {
     handleMessage,
-    start() { if (!config.telegram.enabled) return false; stopped = false; void poll(); return true; },
+    start() { if (!config.telegram.enabled) return false; stopped = false; void startPolling(); return true; },
     stop() { stopped = true; controller?.abort(); }
   };
 }

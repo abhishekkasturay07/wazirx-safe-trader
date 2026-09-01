@@ -27,8 +27,7 @@ export function estimatedSellSlippagePercent(bids, quoteAmountInr) {
   return Math.max(0, (bestBid - averagePrice) / bestBid * 100);
 }
 
-export function liquidityCheck(symbol, ticker, depth = null, quoteAmountInr = config.initialPosition) {
-  if (!config.liquidSymbols.includes(symbol)) return { allowed: false, reason: 'not in liquid-symbol allowlist' };
+export function liquidityCheck(ticker, depth = null, quoteAmountInr = config.initialPosition) {
   const bid = Number(ticker?.bidPrice), ask = Number(ticker?.askPrice), last = Number(ticker?.lastPrice), volume = Number(ticker?.volume);
   if (![bid, ask, last, volume].every(Number.isFinite) || bid <= 0 || ask < bid || last <= 0 || volume < 0) return { allowed: false, reason: 'invalid ticker liquidity data' };
   const mid = (bid + ask) / 2;
@@ -53,7 +52,8 @@ export async function scan() {
     const btc = analyze(btcClosed, true, config.minScore);
     const marketBullish = btc.indicators.ema20 > btc.indicators.ema50;
     const candidates = [];
-    for (const symbol of config.symbols) {
+    const symbols = await wazirx.inrMarkets();
+    for (const symbol of symbols) {
       try {
         const candles = symbol === 'btcinr' ? btcCandles : await wazirx.candles(symbol);
         const closed = symbol === 'btcinr' ? btcClosed : completedCandles(candles, config.interval);
@@ -65,7 +65,7 @@ export async function scan() {
         else if (!position && riskStatus().allowed && result.score >= config.minScore) {
           const ticker = await wazirx.ticker(symbol);
           const depth = await wazirx.depth(symbol);
-          const liquidity = liquidityCheck(symbol, ticker, depth);
+          const liquidity = liquidityCheck(ticker, depth);
           if (liquidity.allowed) candidates.push({ symbol, signal: result });
           else store.event('INFO', `${symbol}: entry skipped — ${liquidity.reason}`);
         }

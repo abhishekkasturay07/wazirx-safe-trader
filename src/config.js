@@ -12,8 +12,8 @@ export const config = Object.freeze({
   liveConfirmation: process.env.LIVE_CONFIRMATION ?? '',
   apiKey: process.env.WAZIRX_API_KEY ?? '',
   secretKey: process.env.WAZIRX_SECRET_KEY ?? '',
+  // Used only by the backtest CLI — the live scanner discovers all INR markets dynamically via wazirx.inrMarkets().
   symbols: (process.env.SYMBOLS ?? 'btcinr,ethinr,xrpinr,solinr').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
-  liquidSymbols: (process.env.LIQUID_SYMBOLS ?? 'btcinr,ethinr,xrpinr,solinr,usdtinr,shibinr,wrxinr,trxinr').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
   interval: process.env.CANDLE_INTERVAL ?? '15m',
   scanCron: process.env.SCAN_CRON ?? '*/15 * * * *',
   startingCapital: number('STARTING_CAPITAL_INR', 2000),
